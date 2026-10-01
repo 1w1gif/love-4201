@@ -1,0 +1,13 @@
+{
+  "name": "maomao-island",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace @maomao/web",
+    "build": "npm run build --workspace @maomao/web",
+    "lint": "npm run lint --workspace @maomao/web"
+  }
+}

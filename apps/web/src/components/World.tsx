@@ -1,0 +1,302 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useGame } from "@/store";
+import {
+  ZONES, NPCS, characterSVG, petSVG, outfitById,
+} from "@maomao/game-core";
+import type { OutfitLook } from "@maomao/art-engine";
+import { Btn, CoinBadge, Sprite } from "./Ui";
+import DialogBox from "./DialogBox";
+import Shop from "./Shop";
+import PetPanel from "./PetPanel";
+
+const TS = 44; // tile size
+
+const NPC_OUTFITS: Record<string, OutfitLook> = {
+  elder: { id: "tee", main: "#f5efe0", sub: "#8a9a6b" },
+  shopkeep: { id: "dress", main: "#f39a6b", sub: "#f5efe0" },
+  villager: { id: "hoodie", main: "#7a8cd8", sub: "#f5efe0" },
+  guard: { id: "sport", main: "#5fae8e", sub: "#f5efe0" },
+  mei: { id: "dress", main: "#e07a9b", sub: "#f5efe0" },
+};
+
+export default function WorldScreen() {
+  const st = useGame();
+  const zone = ZONES[st.zone];
+  const [viewport, setViewport] = useState({ w: 800, h: 520 });
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [petPos, setPetPos] = useState({ x: st.px, y: st.py });
+
+  // NPC 位置快照（阻挡判定）
+  const zoneNpcs = useMemo(() => NPCS.filter((n) => n.zone === st.zone), [st.zone]);
+
+  // 视口尺寸
+  useEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      setViewport({ w: el.clientWidth, h: el.clientHeight });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  const worldW = zone.rows[0].length * TS;
+  const worldH = zone.rows.length * TS;
+  // 世界小于视口时整体居中，否则镜头跟随主角
+  const camX = worldW < viewport.w
+    ? (worldW - viewport.w) / 2
+    : clamp(st.px * TS + TS / 2 - viewport.w / 2, 0, worldW - viewport.w);
+  const camY = worldH < viewport.h
+    ? (worldH - viewport.h) / 2
+    : clamp(st.py * TS + TS / 2 - viewport.h / 2, 0, worldH - viewport.h);
+
+  // 宠物跟随：记录上一格
+  const prevPos = useRef({ x: st.px, y: st.py });
+  useEffect(() => {
+    if (st.px !== prevPos.current.x || st.py !== prevPos.current.y) {
+      setPetPos({ ...prevPos.current });
+      prevPos.current = { x: st.px, y: st.py };
+    }
+  }, [st.px, st.py]);
+  // 换地图（传送）后，宠物直接落到主角脚边，避免残留在旧地图坐标
+  useEffect(() => {
+    setPetPos({ x: st.px, y: st.py });
+    prevPos.current = { x: st.px, y: st.py };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [st.zone]);
+
+  // 键盘 & 摇杆输入循环
+  const inputRef = useRef<{ keys: string[]; joy: { x: number; y: number } | null }>({ keys: [], joy: null });
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      const map: Record<string, string> = {
+        arrowup: "up", w: "up", arrowdown: "down", s: "down",
+        arrowleft: "left", a: "left", arrowright: "right", d: "right",
+      };
+      if (map[k]) {
+        e.preventDefault();
+        if (!inputRef.current.keys.includes(map[k])) inputRef.current.keys.push(map[k]);
+      } else if (k === " " || k === "enter") {
+        e.preventDefault();
+        // 对话优先：有对话时推进对话，否则尝试交互（单一处理入口，避免竞态）
+        const cur = useGame.getState();
+        if (cur.dialog) cur.advanceDialog();
+        else st.interact();
+      } else if (k === "c") {
+        st.openPanel(true);
+      }
+    };
+    const up = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      const map: Record<string, string> = {
+        arrowup: "up", w: "up", arrowdown: "down", s: "down",
+        arrowleft: "left", a: "left", arrowright: "right", d: "right",
+      };
+      inputRef.current.keys = inputRef.current.keys.filter((x) => x !== map[k]);
+    };
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+    };
+  }, [st]);
+
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const s = useGame.getState();
+      const input = inputRef.current;
+      let dx = 0, dy = 0;
+      if (input.joy) {
+        if (Math.abs(input.joy.x) > Math.abs(input.joy.y)) dx = Math.sign(input.joy.x);
+        else dy = Math.sign(input.joy.y);
+      } else {
+        const k = input.keys[input.keys.length - 1];
+        if (k === "up") dy = -1;
+        else if (k === "down") dy = 1;
+        else if (k === "left") dx = -1;
+        else if (k === "right") dx = 1;
+      }
+      if (dx || dy) s.movePlayer(dx, dy);
+    }, 150);
+    return () => clearInterval(iv);
+  }, []);
+
+  const playerSvg = useMemo(
+    () => (st.look ? characterSVG(st.look, outfitById(st.outfitId)) : ""),
+    [st.look, st.outfitId]
+  );
+  const petSvg = useMemo(() => (st.pet ? petSVG(st.pet.look) : ""), [st.pet]);
+
+  const facing = lastFacing(st.px, st.py, prevPos.current);
+  const nearNpc = zoneNpcs.find(
+    (n) => Math.abs(n.x - st.px) + Math.abs(n.y - st.py) === 1
+  );
+
+  const maxHp = st.pet ? st.pet.base.hp + st.pet.level * 5 : 0;
+  const hp = st.pet ? (st.pet.hp ?? maxHp) : 0;
+
+  return (
+    <div className={`screen screen-world ambient-${zone.ambient}`}>
+      {/* HUD */}
+      <div className="hud">
+        <div className="hud-left">
+          <div className="zone-badge">{zone.name}</div>
+          <CoinBadge coins={st.coins} />
+        </div>
+        <div className="hud-right">
+          {st.pet && (
+            <div className="pet-chip" onClick={() => st.openPanel(true)}>
+              <Sprite svg={petSvg} className="pet-chip-sprite" />
+              <div className="pet-chip-info">
+                <b>{st.pet.name} <span className="lv">Lv.{st.pet.level}</span></b>
+                <div className="hpbar mini">
+                  <div className="hpbar-fill" style={{ width: `${(hp / maxHp) * 100}%`, background: hp / maxHp > 0.5 ? "#5fae8e" : hp / maxHp > 0.2 ? "#f2c94c" : "#ef6f6f" }} />
+                </div>
+              </div>
+            </div>
+          )}
+          <Btn tone="cream" onClick={() => st.openPlaza(true)}>广场</Btn>
+          <Btn tone="cream" onClick={() => st.openPanel(true)}>宠物·背包</Btn>
+        </div>
+      </div>
+
+      {/* 地图视口 */}
+      <div className="viewport" ref={viewportRef}>
+        <div
+          className="world"
+          style={{ width: worldW, height: worldH, transform: `translate(${-camX}px, ${-camY}px)` }}
+        >
+          {zone.rows.map((row, y) =>
+            row.split("").map((ch, x) => (
+              <Tile key={`${x}-${y}`} ch={ch} x={x} y={y} bossDone={st.flags.bossDone} />
+            ))
+          )}
+          {zoneNpcs.map((n) => (
+            <div key={n.id} className="entity npc" style={{ left: n.x * TS, top: n.y * TS - 26 }}>
+              <Sprite svg={characterSVG(n.look, NPC_OUTFITS[n.role] ?? NPC_OUTFITS.elder)} />
+              <div className="npc-name">{n.name}</div>
+              {nearNpc?.id === n.id && <div className="talk-bubble">！</div>}
+            </div>
+          ))}
+          {/* 跟随的宠物 */}
+          {st.pet && (
+            <div className="entity pet-follower" style={{ left: petPos.x * TS + 6, top: petPos.y * TS + 14 }}>
+              <Sprite svg={petSvg} />
+            </div>
+          )}
+          {/* 主角 */}
+          <div
+            className={`entity player facing-${facing}`}
+            style={{ left: st.px * TS, top: st.py * TS - 24 }}
+          >
+            <Sprite svg={playerSvg} />
+          </div>
+        </div>
+        <div className="zone-label">{zone.name}</div>
+      </div>
+
+      {/* 移动端操作 */}
+      <Joystick onChange={(j) => (inputRef.current.joy = j)} />
+      <div className="touch-actions">
+        <button className="round-btn big" onClick={() => st.interact()}>💬</button>
+      </div>
+
+      <p className="move-hint">WASD / 方向键移动 · 空格对话 · C 打开背包</p>
+
+      {st.dialog && <DialogBox />}
+      {st.shopOpen && <Shop />}
+      {st.panelOpen && <PetPanel />}
+      <Toast />
+    </div>
+  );
+}
+
+/* ---------------- 地块 ---------------- */
+function Tile({ ch, x, y, bossDone }: { ch: string; x: number; y: number; bossDone?: boolean }) {
+  const alt = (x + y) % 2 === 0 ? "alt" : "";
+  let cls = `tile t-ground ${alt}`;
+  if (ch === ",") cls = `tile t-path ${alt}`;
+  else if (ch === "t") cls = `tile t-grass ${alt}`;
+  else if (ch === "f") cls = `tile t-flower ${alt}`;
+  else if (ch === "w") cls = "tile t-water";
+  else if (ch === "#") cls = "tile t-tree";
+  else if (ch === "h") cls = `tile t-house ${y === 0 || (x + y) % 3 !== 0 ? "" : ""}`;
+  else if (ch === "r") cls = "tile t-rock";
+  else if (ch === "B") cls = `tile t-boss ${bossDone ? "done" : ""}`;
+  else if (ch === "F") cls = "tile t-fence";
+  return (
+    <div
+      className={cls}
+      style={{ left: x * TS, top: y * TS, width: TS, height: TS }}
+    />
+  );
+}
+
+/* ---------------- 虚拟摇杆 ---------------- */
+function Joystick({ onChange }: { onChange: (j: { x: number; y: number } | null) => void }) {
+  const baseRef = useRef<HTMLDivElement>(null);
+  const [knob, setKnob] = useState({ x: 0, y: 0 });
+  const activeRef = useRef(false);
+
+  const handle = (e: React.PointerEvent) => {
+    const el = baseRef.current;
+    if (!el || !activeRef.current) return;
+    const rect = el.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    let dx = (e.clientX - cx) / (rect.width / 2);
+    let dy = (e.clientY - cy) / (rect.height / 2);
+    const len = Math.hypot(dx, dy);
+    if (len > 1) { dx /= len; dy /= len; }
+    setKnob({ x: dx * 26, y: dy * 26 });
+    onChange({ x: dx, y: dy });
+  };
+
+  const end = () => {
+    activeRef.current = false;
+    setKnob({ x: 0, y: 0 });
+    onChange(null);
+  };
+
+  return (
+    <div
+      className="joystick"
+      ref={baseRef}
+      onPointerDown={(e) => {
+        activeRef.current = true;
+        (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
+        handle(e);
+      }}
+      onPointerMove={handle}
+      onPointerUp={end}
+      onPointerCancel={end}
+    >
+      <div className="joystick-knob" style={{ transform: `translate(${knob.x}px, ${knob.y}px)` }} />
+    </div>
+  );
+}
+
+/* ---------------- Toast ---------------- */
+function Toast() {
+  const toast = useGame((s) => s.toast);
+  if (!toast) return null;
+  return <div className="toast pop-in">{toast}</div>;
+}
+
+function clamp(v: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, v));
+}
+
+function lastFacing(cx: number, cy: number, prev: { x: number; y: number }): string {
+  const dx = cx - prev.x;
+  const dy = cy - prev.y;
+  if (dx > 0) return "right";
+  if (dx < 0) return "left";
+  if (dy > 0) return "down";
+  if (dy < 0) return "up";
+  return "down";
+}
