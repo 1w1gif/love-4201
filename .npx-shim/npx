@@ -1,2 +1,0 @@
-#!/bin/sh
-"/c/Program Files/nodejs/npx.cmd" "$@"

@@ -5,3 +5,6 @@ out/
 data/
 *.tsbuildinfo
 .DS_Store
+".vercel/"  
+".npx-shim/"  
+"cf-build.log"  
