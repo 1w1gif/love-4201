@@ -5,6 +5,8 @@ out/
 data/
 *.tsbuildinfo
 .DS_Store
-".vercel/"  
-".npx-shim/"  
-"cf-build.log"  
+.vercel/ 
+.npx-shim/ 
+cf-build.log 
+cf-vercel.log 
+.npmrc
