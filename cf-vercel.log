@@ -1,0 +1,61 @@
+Vercel CLI 47.0.4
+WARN! Build not running on Vercel. System environment variables will not be available.
+WARNING: You should not upload the `.next` directory.
+Installing dependencies...
+npm warn Unknown cli config "--unsafe-perm". This will stop working in the next major version of npm.
+
+up to date in 688ms
+
+42 packages are looking for funding
+  run `npm fund` for details
+npm warn allow-scripts 7 packages have install scripts not yet covered by allowScripts:
+npm warn allow-scripts   sharp@0.34.5 (install: node install/check.js || npm run build)
+npm warn allow-scripts   esbuild@0.14.47 (postinstall: node install.js)
+npm warn allow-scripts   esbuild@0.14.47 (postinstall: node install.js)
+npm warn allow-scripts   esbuild@0.15.18 (postinstall: node install.js)
+npm warn allow-scripts   workerd@1.20250718.0 (postinstall: node install.js)
+npm warn allow-scripts   esbuild@0.28.1 (postinstall: node install.js)
+npm warn allow-scripts   workerd@1.20260926.1 (postinstall: node install.js)
+npm warn allow-scripts
+npm warn allow-scripts Run `npm approve-scripts --allow-scripts-pending` to review, or `npm approve-scripts <pkg>` to allow.
+Detected Next.js version: 15.4.11
+Running "npm run build"
+
+> @maomao/web@0.1.0 build
+> next build
+
+Attention: Next.js now collects completely anonymous telemetry regarding usage.
+This information is used to shape Next.js' roadmap and prioritize features.
+You can learn more, including how to opt-out if you'd not like to participate in this anonymous program, by visiting the following URL:
+https://nextjs.org/telemetry
+
+ ⚠ Found lockfile missing swc dependencies, run next locally to automatically patch
+   ▲ Next.js 15.4.11
+
+   Creating an optimized production build ...
+ ⚠ Found lockfile missing swc dependencies, run next locally to automatically patch
+ ⚠ Found lockfile missing swc dependencies, run next locally to automatically patch
+ ⚠ Found lockfile missing swc dependencies, run next locally to automatically patch
+ ✓ Compiled successfully in 12.0s
+   Linting and checking validity of types ...
+Failed to compile.
+
+./src/app/api/plaza/route.ts:13:25
+Type error: Cannot find name 'D1Database'. Did you mean 'IDBDatabase'?
+
+[0m [90m 11 |[39m [36mfunction[39m bindD1(req[33m:[39m [33mNextRequest[39m) {
+ [90m 12 |[39m   [36mconst[39m env [33m=[39m (req [36mas[39m unknown [36mas[39m {
+[31m[1m>[22m[39m[90m 13 |[39m     cf[33m?[39m[33m:[39m { env[33m?[39m[33m:[39m { [33mDB[39m[33m?[39m[33m:[39m [33mD1Database[39m } }[33m;[39m
+ [90m    |[39m                         [31m[1m^[22m[39m
+ [90m 14 |[39m   })[33m.[39mcf[33m?[39m[33m.[39menv[33m;[39m
+ [90m 15 |[39m   [36mif[39m (env[33m?[39m[33m.[39m[33mDB[39m) {
+ [90m 16 |[39m     (globalThis [36mas[39m unknown [36mas[39m { __env[33m?[39m[33m:[39m { [33mDB[39m[33m?[39m[33m:[39m [33mD1Database[39m } })[33m.[39m__env [33m=[39m { [33mDB[39m[33m:[39m env[33m.[39m[33mDB[39m }[33m;[39m[0m
+Next.js build worker exited with code: 1 and signal: null
+npm error Lifecycle script `build` failed with error:
+npm error code 1
+npm error path C:\第一个游戏\apps\web
+npm error workspace @maomao/web@0.1.0
+npm error location C:\第一个游戏\apps\web
+npm error command failed
+npm error command C:\Windows\system32\cmd.exe /d /s /c next build
+Error: Command "npm run build" exited with 1
