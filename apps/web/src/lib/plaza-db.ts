@@ -57,16 +57,24 @@ export async function withDB<T>(mutate: (db: DB) => Promise<T> | T): Promise<T> 
     await saveToD1(d1, current);
     return result;
   }
-  // 本地 Node 模式:动态委托(模块名运行时拼接,避免打包器追踪)
-  const nodeStore = "./plaza-db." + "node";
-  const { loadDBFile, saveDBFile } = (await import(/* webpackIgnore: true */ nodeStore)) as {
+  // 本地 Node 模式:通过运行时 require 委托(esbuild 无法静态分析 eval)
+  const req = nodeRequire();
+  if (!req) throw new Error("local file mode requires Node.js runtime");
+  const store = req("./plaza-db.node.js") as {
     loadDBFile: () => Promise<DB>;
     saveDBFile: (db: DB) => Promise<void>;
   };
-  const db = await loadDBFile();
+  const db = await store.loadDBFile();
   const result = await mutate(db);
-  await saveDBFile(db);
+  await store.saveDBFile(db);
   return result;
+}
+
+/** 运行时获取 Node 的 require(esbuild 无法静态分析 eval) */
+function nodeRequire(): ((id: string) => unknown) | null {
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const rt = (0, eval)("typeof require === 'function' ? require : null") as ((id: string) => unknown) | null;
+  return rt;
 }
 
 /** 亲密度等级 */
@@ -173,11 +181,11 @@ export async function listPlaza(token?: string) {
     const db = await loadFromD1(d1);
     return plazaView(db, token);
   }
-  const nodeStore = "./plaza-db." + "node";
-  const { loadDBFile } = (await import(/* webpackIgnore: true */ nodeStore)) as {
-    loadDBFile: () => Promise<DB>;
-  };
-  const db = await loadDBFile();
+  // 本地 Node 模式:运行时 require 委托
+  const req2 = nodeRequire();
+  if (!req2) throw new Error("local file mode requires Node.js runtime");
+  const store2 = req2("./plaza-db.node.js") as { loadDBFile: () => Promise<DB> };
+  const db = await store2.loadDBFile();
   return plazaView(db, token);
 }
 
