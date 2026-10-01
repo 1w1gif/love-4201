@@ -4,6 +4,7 @@ import {
   register, login, syncProfile, listPlaza, recordBattle, bondRequest, bondRespond, greet,
 } from "@/lib/plaza-db";
 
+export const runtime = "edge";
 export const dynamic = "force-dynamic";
 
 /** 从 next-on-pages 的请求上下文里取 D1 绑定,写到全局供 plaza-db 使用 */
