@@ -1,0 +1,13 @@
+name = "love-4201"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = ".vercel/output/static"
+
+# Cloudflare Pages 的 D1 数据库绑定（love4201-db）
+# 在 Cloudflare 控制台 Workers & Pages → love-4201 → Settings → Bindings 里配：
+#   类型 D1 database，变量名 DB，选择 love4201-db
+# 本地预览时用下面的配置（wrangler pages dev 会读取）：
+[[d1_databases]]
+binding = "DB"
+database_name = "love4201-db"
+database_id = "在Cloudflare控制台创建D1后填这里"

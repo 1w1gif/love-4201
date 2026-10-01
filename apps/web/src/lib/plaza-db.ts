@@ -1,12 +1,20 @@
 // 广场数据层:双模式存储
 // - Cloudflare(next-on-pages)环境:用 D1 数据库(env.DB),整库存为一行 JSON 文档
 // - 本地 Node 环境(dev / 传统服务器):沿用原 JSON 文件方案,行为不变
-import { promises as fs } from "fs";
-import path from "path";
-import { randomUUID } from "crypto";
+// 注意:Edge 打包不允许静态 import fs/path/crypto,本地模式改为按需动态加载
 import { mulberry32, SKIN_TONES, HAIR_COLORS, EYE_COLORS } from "@maomao/art-engine";
 import type { CharacterLook } from "@maomao/art-engine";
 import { ALL_SPECIES } from "@maomao/game-core";
+
+/** Edge/Workers/Node 通用的 UUID 生成 */
+function uuid(): string {
+  const c = globalThis.crypto as Crypto & { randomUUID?: () => string };
+  if (typeof c.randomUUID === "function") return c.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (ch) => {
+    const r = (Math.random() * 16) | 0;
+    return (ch === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
 
 /** 服务端玩家数据库:注册玩家互相可见、战绩与结缘关系持久化。 */
 
@@ -59,12 +67,21 @@ function cfDB(): D1Database | null {
   return env?.DB ?? null;
 }
 
-// ---------- 本地文件模式(原逻辑保留) ----------
+// ---------- 本地文件模式(原逻辑保留,Node 专有模块按需动态加载) ----------
 
-const DB_PATH = path.join(process.cwd(), "data", "plaza-db.json");
 let dbPromise: Promise<DB> | null = null;
 
+type FsPromises = typeof import("fs")["promises"];
+
+/** 仅在本地 Node 模式下动态加载 fs,Edge 打包器不会追踪到 */
+async function nodeFs(): Promise<FsPromises> {
+  return (await import(/* webpackIgnore: true */ "fs")).promises as FsPromises;
+}
+
 async function loadDB(): Promise<DB> {
+  const fs = await nodeFs();
+  const path = await import(/* webpackIgnore: true */ "path");
+  const DB_PATH = path.join(process.cwd(), "data", "plaza-db.json");
   try {
     const raw = await fs.readFile(DB_PATH, "utf-8");
     return JSON.parse(raw) as DB;
@@ -82,6 +99,9 @@ export function getDB(): Promise<DB> {
 }
 
 async function saveDB(db: DB): Promise<void> {
+  const fs = await nodeFs();
+  const path = await import(/* webpackIgnore: true */ "path");
+  const DB_PATH = path.join(process.cwd(), "data", "plaza-db.json");
   await fs.mkdir(path.dirname(DB_PATH), { recursive: true });
   await fs.writeFile(DB_PATH, JSON.stringify(db, null, 2));
 }
@@ -202,8 +222,8 @@ function seedDB(): DB {
   });
   // 模拟玩家之间预置一些羁绊
   const bonds: PlazaBond[] = [
-    { id: randomUUID(), a: "mock-1", b: "mock-2", points: 44, lastGreet: "", createdAt: Date.now() - 5 * 86400000 },
-    { id: randomUUID(), a: "mock-3", b: "mock-5", points: 91, lastGreet: "", createdAt: Date.now() - 9 * 86400000 },
+    { id: uuid(), a: "mock-1", b: "mock-2", points: 44, lastGreet: "", createdAt: Date.now() - 5 * 86400000 },
+    { id: uuid(), a: "mock-3", b: "mock-5", points: 91, lastGreet: "", createdAt: Date.now() - 9 * 86400000 },
   ];
   return { players, bonds, requests: [], sessions: {} };
 }
@@ -234,7 +254,7 @@ export async function register(name: string, pin: string) {
     if (!/^\d{4,6}$/.test(pin)) return { error: "口令是 4-6 位数字" };
     if (findByName(db, clean)) return { error: "这个昵称已经被占用了" };
     const player: PlazaPlayer = {
-      id: randomUUID(),
+      id: uuid(),
       name: clean,
       pin,
       isMock: false,
@@ -246,12 +266,12 @@ export async function register(name: string, pin: string) {
       createdAt: Date.now(),
     };
     db.players.push(player);
-    const token = randomUUID();
+    const token = uuid();
     db.sessions[token] = player.id;
     // 两只模拟玩家主动向你发来结缘申请,让新玩家体验结缘流程
     const mocks = db.players.filter((p) => p.isMock).slice(0, 2);
     for (const m of mocks) {
-      db.requests.push({ id: randomUUID(), from: m.id, to: player.id, createdAt: Date.now() });
+      db.requests.push({ id: uuid(), from: m.id, to: player.id, createdAt: Date.now() });
     }
     return { token, player: publicPlayer(player) };
   });
@@ -261,7 +281,7 @@ export async function login(name: string, pin: string) {
   return withDB(async (db) => {
     const p = findByName(db, name.trim());
     if (!p || p.pin !== pin) return { error: "昵称或口令不对哦" };
-    const token = randomUUID();
+    const token = uuid();
     db.sessions[token] = p.id;
     return { token, player: publicPlayer(p) };
   });
@@ -352,10 +372,10 @@ export async function bondRequest(token: string, targetId: string) {
     if (db.requests.some((r) => (r.from === me.id && r.to === target.id))) return { error: "申请已经发过啦,等等吧" };
     // 模拟玩家会立刻接受申请
     if (target.isMock) {
-      db.bonds.push({ id: randomUUID(), a: me.id, b: target.id, points: 5, lastGreet: "", createdAt: Date.now() });
+      db.bonds.push({ id: uuid(), a: me.id, b: target.id, points: 5, lastGreet: "", createdAt: Date.now() });
       return { ok: true, auto: true, name: target.name };
     }
-    db.requests.push({ id: randomUUID(), from: me.id, to: target.id, createdAt: Date.now() });
+    db.requests.push({ id: uuid(), from: me.id, to: target.id, createdAt: Date.now() });
     return { ok: true, auto: false, name: target.name };
   });
 }
@@ -373,7 +393,7 @@ export async function bondRespond(token: string, requestId: string, accept: bool
       const from = db.players.find((p) => p.id === req.from);
       name = from?.name ?? "";
       if (from && !bondBetween(db, me.id, from.id)) {
-        db.bonds.push({ id: randomUUID(), a: me.id, b: from.id, points: 5, lastGreet: "", createdAt: Date.now() });
+        db.bonds.push({ id: uuid(), a: me.id, b: from.id, points: 5, lastGreet: "", createdAt: Date.now() });
       }
     }
     return { ok: true, accept, name };
