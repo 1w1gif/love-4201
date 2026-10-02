@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { plazaPost } from "@/lib/plaza-client";
 import { ELEMENT_NAMES } from "@maomao/game-core";
+import { useGame } from "@/store";
 import { Btn, HpBar } from "./Ui";
 
 /* =============== 类型 =============== */
@@ -238,13 +239,21 @@ function BossJoinBox({ token, onJoined }: { token: string; onJoined: (r: BossRoo
 
 /* =============== 聊天大厅 =============== */
 
+// 场景中文名
+const ZONE_NAMES: Record<string, string> = {
+  village: "毛毛村", meadow: "阳光草原", forest: "迷雾森林", lake: "星尘湖", cave: "回声洞窟",
+};
+
 function PlazaChat({ token, myName }: { token: string; myName: string }) {
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [online, setOnline] = useState(0);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [onlineUsers, setOnlineUsers] = useState<{ playerId: string; name: string; zone: string }[]>([]);
+  const [giftTo, setGiftTo] = useState<{ id: string; name: string } | null>(null);
   const lastId = useRef(0);
   const boxRef = useRef<HTMLDivElement>(null);
+  const showToast = useGame((s) => s.showToast);
 
   const poll = useCallback(async () => {
     try {
@@ -259,6 +268,8 @@ function PlazaChat({ token, myName }: { token: string; myName: string }) {
         });
       }
       if (typeof r.online === "number") setOnline(r.online);
+      const ol = await plazaPost<{ players?: { playerId: string; name: string; zone: string }[] }>({ action: "onlineList", token });
+      if (ol.players) setOnlineUsers(ol.players);
     } catch { /* 断网时静默，下轮再试 */ }
   }, [token]);
 
@@ -279,17 +290,61 @@ function PlazaChat({ token, myName }: { token: string; myName: string }) {
     poll();
   };
 
+  // 拜访：请求对方位置 → 传送过去（写进 store，由 World 渲染）
+  const visit = async (p: { playerId: string; name: string; zone: string }) => {
+    const r = await plazaPost<{ target?: { zone: string }; error?: string }>({ action: "visit", token, targetId: p.playerId });
+    if (r.error || !r.target) { showToast(r.error ?? "对方已经离线了"); poll(); return; }
+    useGame.getState().visitPlayer(p.playerId, p.name, r.target.zone || p.zone);
+    showToast(`正在前往 ${p.name} 所在的${ZONE_NAMES[r.target.zone || p.zone] ?? "地图"}……`);
+  };
+
+  // 送礼：花 20 金币，羁绊 +3
+  const doGift = async () => {
+    if (!giftTo) return;
+    const g = useGame.getState();
+    if (g.coins < 20) { showToast("金币不够啦（送礼需要 20 金币）"); setGiftTo(null); return; }
+    g.addCoins(-20);
+    const r = await plazaPost<{ points?: number; error?: string }>({ action: "giftSend", token, targetId: giftTo.id });
+    if (r.error) { showToast(r.error); g.addCoins(20); setGiftTo(null); return; }
+    showToast(`礼物送出！和 ${giftTo.name} 的羁绊 +3（当前 ${r.points}）`);
+    g.trackStat("dailyGreet");
+    setGiftTo(null);
+    poll();
+  };
+
   return (
     <div className="chat-wrap">
       <div className="chat-head">
         <span className={`online-dot ${online > 1 ? "hot" : ""}`} />
-        当前在线 {online} 人
+        当前在线 {online + (onlineUsers.length > 0 ? 1 : 0)} 人
       </div>
+      {/* 在线玩家列表：拜访 / 送礼 */}
+      {onlineUsers.length > 0 && (
+        <div className="online-users">
+          {onlineUsers.map((u) => (
+            <div key={u.playerId} className="online-user-row">
+              <span className="ou-name">{u.name}</span>
+              <span className="ou-zone">{ZONE_NAMES[u.zone] ?? u.zone}</span>
+              <button className="ou-btn visit" onClick={() => visit(u)}>🚪 拜访</button>
+              <button className="ou-btn gift" onClick={() => setGiftTo({ id: u.playerId, name: u.name })}>🎁 送礼</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {giftTo && (
+        <div className="gift-confirm">
+          花 <b>20 金币</b> 给 <b>{giftTo.name}</b> 送一份礼物？（TA 的羁绊 +3）
+          <div className="gift-actions">
+            <Btn tone="coral" onClick={doGift}>送！</Btn>
+            <Btn tone="cream" onClick={() => setGiftTo(null)}>算了</Btn>
+          </div>
+        </div>
+      )}
       <div className="chat-box" ref={boxRef}>
         {msgs.length === 0 && <p className="chat-empty">还没有人说话，来抢个沙发～</p>}
         {msgs.map((m) => (
           <div key={m.id} className="chat-line">
-            <b className={m.name === myName ? "me" : ""}>{m.name}：</b>
+            <b className={m.name === myName ? "me" : m.name === "礼物精灵" ? "gift" : ""}>{m.name}：</b>
             <span>{m.text}</span>
           </div>
         ))}
@@ -318,38 +373,45 @@ function OnlineSpar({ token, myName, onBattleEnd }: {
 }) {
   const [roomId, setRoomId] = useState<string | null>(null);
   const [room, setRoom] = useState<RoomInfo | null>(null);
-  const [incoming, setIncoming] = useState<RoomInfo | null>(null);
+  const [incoming, setIncoming] = useState<{ id: string; hostName: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const endedRef = useRef(false);
 
-  // 轮询：我的房间状态（被挑战/对局进行/结束）
+  // 轮询：我的房间状态 + 全服最新等待挑战（免房间码：弹出即可一键接受）
   useEffect(() => {
     let alive = true;
     const tick = async () => {
       try {
-        const r = await plazaPost<{ rooms?: RoomInfo[] }>({ action: "sparMyRoom", token });
+        const r = await plazaPost<{ rooms?: RoomInfo[]; incoming?: { id: string; hostName: string } | null }>({ action: "sparMyRoom", token });
         if (!alive || !r.rooms) return;
         const active = r.rooms.find((x) => x.status === "active" || x.status === "waiting");
         if (active) {
           setRoomId(active.id);
           setRoom(active);
-          // 我是房主且对方已加入 → 提示开战；我是客人 → 弹出战确认由 accept 流程处理
         }
-        const waitingForMe = r.rooms.find((x) => x.status === "waiting" && x.hostId && x.guestId === null && x.hostName !== myName);
-        // waiting 房间只有房主可见自己的；被挑战方通过 sparState 全量轮询看不到未加入的房，
-        // 所以"被挑战"走全服广播：见下方 sparIncoming 轮询
         if (!active) {
           setRoom(null);
           setRoomId(null);
         }
-        setIncoming(waitingForMe ?? null);
+        setIncoming(r.incoming ?? null);
       } catch { /* ignore */ }
     };
     tick();
     const t = setInterval(tick, 2000);
     return () => { alive = false; clearInterval(t); };
   }, [token, myName]);
+
+  // 一键接受全服挑战
+  const acceptIncoming = async () => {
+    if (!incoming || busy) return;
+    setBusy(true);
+    const r = await plazaPost<{ ok?: boolean; error?: string }>({ action: "sparAccept", token, roomId: incoming.id });
+    setBusy(false);
+    if (r.error) { setErr(r.error); setTimeout(() => setErr(null), 2500); setIncoming(null); return; }
+    const st = await plazaPost<{ room?: RoomInfo }>({ action: "sparState", token, roomId: incoming.id });
+    if (st.room) { setRoom(st.room); setRoomId(st.room.id); }
+  };
 
   // 对局结束上报（只触发一次）
   useEffect(() => {
@@ -404,21 +466,28 @@ function OnlineSpar({ token, myName, onBattleEnd }: {
   return (
     <div className="spar-wrap">
       {err && <div className="spar-err">{err}</div>}
+      {/* 全服挑战弹窗：任何人发起的等待挑战都会出现在这里，一键接受 */}
+      {incoming && !room && (
+        <div className="spar-incoming pop-in">
+          <b>{incoming.hostName}</b> 向全服发起了切磋挑战！
+          <div className="gift-actions">
+            <Btn tone="coral" onClick={acceptIncoming} disabled={busy}>⚔ 应战！</Btn>
+          </div>
+        </div>
+      )}
       {!room && (
         <div className="spar-idle">
           <p className="spar-tip">
-            发起挑战后把房间码告诉对方，对方在下面输入房间码加入，就能实时对战！
-            （双方都在线时效果最佳）
+            发起挑战后，所有在线玩家的大厅都会弹出「应战」按钮，谁点谁开打——不再需要房间码。<br />
+            也可以去聊天大厅「拜访」某个玩家，到 TA 的世界里面对面切磋！
           </p>
-          <Btn tone="coral" onClick={challenge} disabled={busy}>⚔ 发起实时切磋</Btn>
-          <JoinBox token={token} onJoined={(r) => { setRoomId(r.id); setRoom(r); }} />
+          <Btn tone="coral" onClick={challenge} disabled={busy}>⚔ 发起切磋（全服广播）</Btn>
         </div>
       )}
       {room?.status === "waiting" && room.hostName === myName && (
         <div className="spar-waiting pop-in">
-          <p>等待挑战者中……</p>
-          <div className="spar-roomcode">房间码：<b>{room.id}</b></div>
-          <p className="spar-tip">把这个码发给你的朋友，让 TA 在「输入房间码加入」里填入！</p>
+          <p>⚔ 挑战已向全服广播！</p>
+          <p className="spar-tip">在线的玩家会看到「应战」提示，第一个点的人和你开打（60 秒内有效）。</p>
           <Btn tone="cream" onClick={cancel}>取消挑战</Btn>
         </div>
       )}
@@ -428,29 +497,6 @@ function OnlineSpar({ token, myName, onBattleEnd }: {
       {(room?.status === "host_won" || room?.status === "guest_won") && room.state && (
         <SparArena room={room} myName={myName} busy={busy} err={err} onMove={doMove} />
       )}
-    </div>
-  );
-}
-
-function JoinBox({ token, onJoined }: { token: string; onJoined: (r: RoomInfo) => void }) {
-  const [code, setCode] = useState("");
-  const [msg, setMsg] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const join = async () => {
-    if (!code.trim() || busy) return;
-    setBusy(true);
-    setMsg(null);
-    const r = await plazaPost<{ ok?: boolean; error?: string }>({ action: "sparAccept", token, roomId: code.trim() });
-    setBusy(false);
-    if (r.error) { setMsg(r.error); return; }
-    const st = await plazaPost<{ room?: RoomInfo }>({ action: "sparState", token, roomId: code.trim() });
-    if (st.room) onJoined(st.room);
-  };
-  return (
-    <div className="spar-join">
-      <input className="chat-input" placeholder="输入房间码加入对局" maxLength={8} value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} />
-      <Btn tone="sky" onClick={join} disabled={busy || !code.trim()}>加入</Btn>
-      {msg && <p className="spar-err">{msg}</p>}
     </div>
   );
 }

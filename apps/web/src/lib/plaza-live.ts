@@ -3,6 +3,7 @@
 //   spar_rooms(id TEXT PK, host_id, guest_id, status, turn, state_json, updated_at)
 //   chat_msgs(id INTEGER PK AUTOINCREMENT, player_id, name, text, created_at)
 // 在线判定：玩家 30 秒内在 sync 里出现过（记 presence 表）
+import { loadFromD1, saveToD1 } from "./plaza-db";
 
 type SparStatus = "waiting" | "active" | "host_won" | "guest_won" | "declined" | "cancelled";
 
@@ -143,6 +144,16 @@ export async function sparSaveState(db: D1Database, roomId: string, state: SparS
     .bind(JSON.stringify(state), status, Date.now(), roomId).run();
 }
 
+/** 最新一条等待中的挑战（大厅"接受挑战"按钮用；60 秒内的才算数） */
+export async function sparLatestWaiting(db: D1Database, excludeHostId: string): Promise<SparRoom | null> {
+  await ensureLiveTables(db);
+  const row = await db.prepare(
+    `SELECT * FROM spar_rooms WHERE status = 'waiting' AND host_id != ? AND updated_at > ?
+     ORDER BY updated_at DESC LIMIT 1`
+  ).bind(excludeHostId, Date.now() - 60 * 1000).first<Record<string, unknown>>();
+  return row ? rowToRoom(row) : null;
+}
+
 /** 在线玩家数：最近 35 秒 sync 过档案的人数 */
 export async function presenceCount(db: D1Database): Promise<number> {
   await ensurePresence(db);
@@ -208,6 +219,41 @@ export async function worldPlayers(db: D1Database, zone: string, excludeId: stri
   }));
 }
 
+/** 全服在线玩家列表（大厅「谁在线」用，含所在场景） */
+export async function onlineList(db: D1Database, excludeId: string): Promise<WorldPlayer[]> {
+  await ensurePresence(db);
+  await db.prepare(`DELETE FROM presence WHERE seen_at < ?`).bind(Date.now() - PRESENCE_TTL).run();
+  const rs = await db.prepare(
+    `SELECT player_id, name, zone, px, py, look_json FROM presence
+     WHERE player_id != ? AND seen_at > ? AND name != '' ORDER BY seen_at DESC LIMIT 30`
+  ).bind(excludeId, Date.now() - PRESENCE_TTL).all<Record<string, unknown>>();
+  return (rs.results ?? []).map((r) => ({
+    playerId: String(r.player_id),
+    name: String(r.name),
+    zone: String(r.zone),
+    px: Number(r.px),
+    py: Number(r.py),
+    look: r.look_json ? JSON.parse(String(r.look_json)) : null,
+  }));
+}
+
+/** 获取某个玩家的在线位置（拜访用） */
+export async function presenceOf(db: D1Database, playerId: string): Promise<WorldPlayer | null> {
+  await ensurePresence(db);
+  const r = await db.prepare(
+    `SELECT player_id, name, zone, px, py, look_json FROM presence WHERE player_id = ? AND seen_at > ?`
+  ).bind(playerId, Date.now() - PRESENCE_TTL).first<Record<string, unknown>>();
+  if (!r) return null;
+  return {
+    playerId: String(r.player_id),
+    name: String(r.name),
+    zone: String(r.zone),
+    px: Number(r.px),
+    py: Number(r.py),
+    look: r.look_json ? JSON.parse(String(r.look_json)) : null,
+  };
+}
+
 export async function chatPost(db: D1Database, playerId: string, name: string, text: string): Promise<ChatMsg> {
   await ensureLiveTables(db);
   const clean = text.trim().slice(0, 80);
@@ -216,6 +262,26 @@ export async function chatPost(db: D1Database, playerId: string, name: string, t
   await db.prepare(`INSERT INTO chat_msgs (player_id, name, text, created_at) VALUES (?, ?, ?, ?)`)
     .bind(playerId, name, clean, createdAt).run();
   return { id: createdAt, playerId, name, text: clean, createdAt };
+}
+
+/** 送礼：给对方 +3 羁绊（无羁绊则自动建立），并往聊天流里插一条礼物播报 */
+export async function giftSend(
+  db: D1Database, fromId: string, fromName: string, toId: string
+): Promise<{ ok: boolean; points?: number; error?: string }> {
+  await ensureLiveTables(db);
+  const all = await loadFromD1(db);
+  const to = all.players.find((p) => p.id === toId);
+  if (!to) return { ok: false, error: "找不到这位训练家" };
+  if (toId === fromId) return { ok: false, error: "不能送给自己哦" };
+  let bond = all.bonds.find((b) => (b.a === fromId && b.b === toId) || (b.a === toId && b.b === fromId));
+  if (!bond) {
+    bond = { id: crypto.randomUUID(), a: fromId, b: toId, points: 0, lastGreet: "", createdAt: Date.now() };
+    all.bonds.push(bond);
+  }
+  bond.points += 3;
+  await saveToD1(db, all);
+  await chatPost(db, fromId, "礼物精灵", `${fromName} 给 ${to.name} 送了一份礼物！羁绊 +3 🎁`);
+  return { ok: true, points: bond.points };
 }
 
 export async function chatList(db: D1Database, sinceId = 0, limit = 40): Promise<ChatMsg[]> {

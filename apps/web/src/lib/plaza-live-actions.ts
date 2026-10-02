@@ -3,8 +3,9 @@
 import { speciesById, maxHpOf, atkOf, defOf, spdOf, movesOf } from "@maomao/game-core";
 import type { Pet } from "@maomao/game-core";
 import {
-  sparCreate, sparJoin, sparCancel, sparGet, sparMyRoom, sparSaveState,
+  sparCreate, sparJoin, sparCancel, sparGet, sparMyRoom, sparSaveState, sparLatestWaiting,
   chatPost, chatList, presenceUpdate, presenceCount, worldPlayers,
+  onlineList, presenceOf, giftSend,
 } from "./plaza-live";import type { SparRoom, SparSide, SparState } from "./plaza-live";
 import { sparDoAction } from "./spar-engine";
 import { loadFromD1, publicPlayer } from "./plaza-db";
@@ -125,12 +126,15 @@ export async function handleLiveAction(
     case "sparMyRoom": {
       if (!me) return { rooms: [] };
       const rooms = await sparMyRoom(db, me.id);
+      // 顺带返回最新一条别人的等待挑战（供大厅"一键接受"）
+      const latest = await sparLatestWaiting(db, me.id);
       return {
         ok: true,
         rooms: rooms.map((r: SparRoom) => ({
           id: r.id, status: r.status, hostId: r.hostId, hostName: r.hostName,
           guestId: r.guestId, guestName: r.guestName, state: r.state,
         })),
+        incoming: latest ? { id: latest.id, hostName: latest.hostName } : null,
       };
     }
     case "chatPost": {
@@ -155,6 +159,22 @@ export async function handleLiveAction(
       await presenceUpdate(db, me.id, me.name, zone, Number(body.px ?? 0), Number(body.py ?? 0), lookJson);
       const players = await worldPlayers(db, zone, me.id);
       return { ok: true, players };
+    }
+    case "onlineList": {
+      if (!me) return { error: "请先登录" };
+      const players = await onlineList(db, me.id);
+      return { ok: true, players };
+    }
+    case "visit": {
+      if (!me) return { error: "请先登录" };
+      const target = await presenceOf(db, String(body.targetId ?? ""));
+      if (!target) return { error: "对方已经不在线了" };
+      return { ok: true, target };
+    }
+    case "giftSend": {
+      if (!me) return { error: "请先登录" };
+      const r = await giftSend(db, me.id, me.name, String(body.targetId ?? ""));
+      return r;
     }
     default:
       return null; // 不是 live 模块的 action

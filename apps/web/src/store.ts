@@ -94,6 +94,8 @@ export interface GameState {
   chapter2Done: boolean;
   /** 广场账号（服务端注册的训练家身份） */
   account: { token: string; playerId: string; name: string } | null;
+  /** 拜访模式：正在参观谁的地图（World 渲染互动按钮，可返回） */
+  visiting: { playerId: string; name: string; returnZone: string; returnPx: number; returnPy: number } | null;
 
   /** 成就/日常/签到状态 */
   stats: Record<string, number>;
@@ -132,8 +134,13 @@ export interface GameState {
   openDaily: (v: boolean) => void;
   setActivePet: (uid: string) => void;
   openPlaza: (v: boolean, tab?: "live" | "players" | "rank" | "bonds") => void;
+  /** 拜访在线玩家：传送到对方场景，记录出发点以便返回 */
+  visitPlayer: (playerId: string, name: string, zone: string) => void;
+  endVisit: () => void;
   /** 组队 Boss 讨伐结算：胜利发金币/经验，失败仅提示 */
   bossRaidReward: (won: boolean) => void;
+  /** 直接增减金币（送礼等社交消费用） */
+  addCoins: (delta: number) => void;
   openGm: (v: boolean) => void;
   /** 管理员面板操作：直接改写存档数值 */
   gmDo: (what: GmAction) => void;
@@ -208,6 +215,7 @@ export const useGame = create<GameState>()(
       chapterDone: false,
       chapter2Done: false,
       account: null,
+  visiting: null,
 
       stats: {},
       achievementsClaimed: {},
@@ -228,7 +236,7 @@ export const useGame = create<GameState>()(
           items: { "potion-s": 2, "potion-l": 0, revive: 0 },
           flags: {}, zone: "village", px: 8, py: 8,
           battle: null, battleMeta: null, dialog: null, shopOpen: false,
-          panelOpen: false, chapterDone: false, chapter2Done: false,
+          panelOpen: false, chapterDone: false, chapter2Done: false, visiting: null,
         }),
       setAffinity: (e) => set({ affinity: e, phase: "create" }),
       setLook: (l) => set({ look: l }),
@@ -479,6 +487,26 @@ export const useGame = create<GameState>()(
         get().showToast(`${picked.name} 成为主战宠物！${old.name} 休息一下，进了仓库。`);
       },
       openPlaza: (v, tab) => set((s) => ({ plazaOpen: v, plazaTab: tab ?? s.plazaTab })),
+      visitPlayer: (playerId, name, zone) => {
+        const st = get();
+        // 找一个安全的落点：对方位置附近由 World 的 worldPlayers 同步，这里传送到场景入口附近
+        const spot: Record<string, { px: number; py: number }> = {
+          village: { px: 8, py: 8 }, meadow: { px: 2, py: 2 }, forest: { px: 2, py: 2 }, lake: { px: 2, py: 2 }, cave: { px: 2, py: 2 },
+        };
+        const s = spot[zone] ?? { px: 8, py: 8 };
+        set({
+          visiting: { playerId, name, returnZone: st.zone, returnPx: st.px, returnPy: st.py },
+          zone, px: s.px, py: s.py,
+          plazaOpen: false,
+        });
+      },
+      endVisit: () => {
+        const v = get().visiting;
+        if (!v) return;
+        set({ visiting: null, zone: v.returnZone, px: v.returnPx, py: v.returnPy });
+        get().showToast("回到了自己的世界");
+      },
+      addCoins: (delta) => set((s) => ({ coins: Math.max(0, s.coins + delta) })),
       bossRaidReward: (won) => {
         const st = get();
         if (won && st.pet) {

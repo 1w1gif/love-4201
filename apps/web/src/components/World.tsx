@@ -61,6 +61,24 @@ export default function WorldScreen() {
     return () => { alive = false; clearInterval(t); };
   }, [st.account, st.zone]);
 
+  // 拜访互动：切磋（直接向对方发起，免房间码）与送礼
+  const visitSpar = (p: { playerId: string; name: string; px: number; py: number; look?: unknown }) => {
+    const s = useGame.getState();
+    if (!s.pet) { s.showToast("先去领养一只胖胖宠物再来切磋吧！"); return; }
+    // 拉对方档案（species/level 从 worldPlayers 的 look 不足，走广场列表）
+    s.openPlaza(true, "players");
+    s.showToast(`向 ${p.name} 发起切磋：在训练家列表点 TA 的「⚔ 切磋」即可开战！`);
+  };
+  const visitGift = (p: { playerId: string; name: string }) => {
+    const s = useGame.getState();
+    if (s.coins < 20) { s.showToast("金币不够啦（送礼需要 20 金币）"); return; }
+    s.addCoins(-20);
+    plazaPost({ action: "giftSend", token: s.account?.token ?? "", targetId: p.playerId }).then((r: { points?: number; error?: string }) => {
+      if (r.error) { s.addCoins(20); s.showToast(r.error); return; }
+      s.showToast(`礼物送出！和 ${p.name} 的羁绊 +3（当前 ${r.points}）🎁`);
+    });
+  };
+
   // 视口尺寸
   useEffect(() => {
     const el = viewportRef.current;
@@ -195,6 +213,12 @@ export default function WorldScreen() {
         <div className="hud-left">
           <div className="zone-badge">{zone.name}</div>
           <CoinBadge coins={st.coins} />
+          {st.visiting && (
+            <div className="visit-banner">
+              🚪 正在拜访 <b>{st.visiting.name}</b> 的世界
+              <button className="visit-back" onClick={() => st.endVisit()}>返回我的世界</button>
+            </div>
+          )}
         </div>
         <div className="hud-right">
           {st.pet && (
@@ -245,6 +269,13 @@ export default function WorldScreen() {
             <div key={p.playerId} className="entity online-player" style={{ left: p.px * TS, top: p.py * TS - 24 }}>
               <Sprite svg={characterSVG(p.look, outfitById("tee"))} />
               <div className="online-name">{p.name}</div>
+              {/* 拜访模式下，被拜访者身边出现互动按钮 */}
+              {st.visiting?.playerId === p.playerId && Math.abs(p.px - st.px) + Math.abs(p.py - st.py) <= 2 && (
+                <div className="visit-actions">
+                  <button className="va-btn fight" onClick={() => visitSpar(p)}>⚔ 切磋</button>
+                  <button className="va-btn gift" onClick={() => visitGift(p)}>🎁 送礼</button>
+                </div>
+              )}
             </div>
           ))}
           {/* 跟随的宠物 */}

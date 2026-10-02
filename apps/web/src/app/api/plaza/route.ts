@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
     if (live !== null) return NextResponse.json(live);
     const boss = await handleBossAction(body.action, body, d1);
     if (boss !== null) return NextResponse.json(boss);
-  } else if ([...BOSS_ACTIONS, "sparChallenge", "sparAccept", "sparMove", "sparMyRoom", "sparState", "sparCancel", "sparDecline", "chatPost", "chatList", "worldPlayers"].includes(body.action)) {
+  } else if ([...BOSS_ACTIONS, "sparChallenge", "sparAccept", "sparMove", "sparMyRoom", "sparState", "sparCancel", "sparDecline", "chatPost", "chatList", "worldPlayers", "onlineList", "visit", "giftSend"].includes(body.action)) {
     return NextResponse.json({ error: "实时对战需要云端数据库（D1）环境" }, { status: 400 });
   }
   let result: unknown;
