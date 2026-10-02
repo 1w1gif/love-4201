@@ -4,9 +4,8 @@ import type { CharacterLook } from "@maomao/art-engine";
 import { ALL_SPECIES } from "@maomao/game-core";
 import type { DB, PlazaBond, PlazaPlayer } from "./plaza-db";
 
-const MOCK_NAMES = [
-  "阿硕", "圆圆酱", "肥啾 trainer", "奶盖", "布丁狗", "星星眼", "铁头娃", "团子控",
-];
+// NPC 已按需求全部下线:种子只建空广场,真人玩家注册后自动向彼此发结缘申请的逻辑见 plaza-db.register
+const MOCK_NAMES: string[] = [];
 
 function mockLook(rng: () => number): CharacterLook {
   const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(rng() * arr.length)];
@@ -50,11 +49,8 @@ export function seedDB(): DB {
       createdAt: Date.now() - (i + 1) * 86400000,
     };
   });
-  // 模拟玩家之间预置一些羁绊
-  const bonds: PlazaBond[] = [
-    { id: uuid(), a: "mock-1", b: "mock-2", points: 44, lastGreet: "", createdAt: Date.now() - 5 * 86400000 },
-    { id: uuid(), a: "mock-3", b: "mock-5", points: 91, lastGreet: "", createdAt: Date.now() - 9 * 86400000 },
-  ];
+  // (原 NPC 预置羁绊已随 NPC 一起移除)
+  const bonds: PlazaBond[] = [];
   return { players, bonds, requests: [], sessions: {} };
 }
 
