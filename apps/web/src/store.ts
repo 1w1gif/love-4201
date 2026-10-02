@@ -132,6 +132,8 @@ export interface GameState {
   openDaily: (v: boolean) => void;
   setActivePet: (uid: string) => void;
   openPlaza: (v: boolean, tab?: "live" | "players" | "rank" | "bonds") => void;
+  /** 组队 Boss 讨伐结算：胜利发金币/经验，失败仅提示 */
+  bossRaidReward: (won: boolean) => void;
   openGm: (v: boolean) => void;
   /** 管理员面板操作：直接改写存档数值 */
   gmDo: (what: GmAction) => void;
@@ -477,6 +479,25 @@ export const useGame = create<GameState>()(
         get().showToast(`${picked.name} 成为主战宠物！${old.name} 休息一下，进了仓库。`);
       },
       openPlaza: (v, tab) => set((s) => ({ plazaOpen: v, plazaTab: tab ?? s.plazaTab })),
+      bossRaidReward: (won) => {
+        const st = get();
+        if (won && st.pet) {
+          const pet = { ...st.pet };
+          const coins = 150;
+          const exp = 80;
+          const { levels } = addExp(pet, exp);
+          set({ coins: st.coins + coins, pet });
+          get().trackStat("wins");
+          get().trackStat("coinsEarned", coins);
+          if (levels > 0) get().trackStat("levelUps", levels);
+          get().showToast(`👑 讨伐成功！获得 ${coins} 金币 + ${exp} 经验${levels > 0 ? `，${pet.name} 升到了 Lv.${pet.level}！` : "！"}`);
+        } else if (won) {
+          set({ coins: st.coins + 150 });
+          get().showToast("👑 讨伐成功！获得 150 金币（先去领养宠物才能拿经验哦）");
+        } else {
+          get().showToast("讨伐失败……组个更强搭档再挑战！");
+        }
+      },
       setAccount: (a) => set({ account: a }),
 
       openGm: (v) => set({ gmOpen: v }),

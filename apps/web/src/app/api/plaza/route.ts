@@ -5,6 +5,7 @@ import {
   adminPlayers, adminDeletePlayer, adminCleanupIdle,
 } from "@/lib/plaza-db";
 import { handleLiveAction } from "@/lib/plaza-live-actions";
+import { handleBossAction } from "@/lib/plaza-boss-actions";
 
 export const runtime = "edge";
 export const dynamic = "force-dynamic";
@@ -37,10 +38,13 @@ export async function POST(req: NextRequest) {
   }
   // 实时切磋/聊天模块（需要 D1 绑定；本地文件模式自动降级报错提示）
   const d1 = (globalThis as unknown as { __env?: { DB?: D1Database } }).__env?.DB;
+  const BOSS_ACTIONS = ["bossChallenge", "bossCancel", "bossJoin", "bossMove", "bossState", "bossMyRoom"];
   if (d1) {
     const live = await handleLiveAction(body.action, body, d1);
     if (live !== null) return NextResponse.json(live);
-  } else if (["sparChallenge", "sparAccept", "sparMove", "sparMyRoom", "sparState", "sparCancel", "sparDecline", "chatPost", "chatList", "worldPlayers"].includes(body.action)) {
+    const boss = await handleBossAction(body.action, body, d1);
+    if (boss !== null) return NextResponse.json(boss);
+  } else if ([...BOSS_ACTIONS, "sparChallenge", "sparAccept", "sparMove", "sparMyRoom", "sparState", "sparCancel", "sparDecline", "chatPost", "chatList", "worldPlayers"].includes(body.action)) {
     return NextResponse.json({ error: "实时对战需要云端数据库（D1）环境" }, { status: 400 });
   }
   let result: unknown;

@@ -661,6 +661,18 @@ h1, h2, h3, p { margin: 0; }
   border: 2px solid var(--cocoa); border-radius: 999px; padding: 0 7px;
   white-space: nowrap; pointer-events: none;
 }
+/* 组队 Boss 战斗 */
+.boss-arena { gap: 10px; }
+.boss-card {
+  border: 3px solid var(--cocoa); border-radius: 14px; padding: 10px 14px;
+  background: linear-gradient(135deg, #3a2d4e, #241d33); color: #fff;
+  display: flex; flex-direction: column; gap: 5px;
+}
+.boss-title { font-weight: 900; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.boss-card .spar-hpnum { color: #cfc4e8; }
+.boss-card .hpbar { border-color: #fff; }
+.boss-team { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.spar-result.lose { background: #8a7a9e; color: #fff; }
 .battle-result {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
   background: rgba(74,55,55,0.45); gap: 10px; text-align: center;

@@ -126,7 +126,12 @@ export default function Plaza() {
             token={account.token}
             myName={account.name}
             onBattleEnd={(won, oppName) => {
-              showToast(won ? `实时切磋赢了 ${oppName}！` : `输给了 ${oppName}，下次扳回来！`);
+              // 组队 Boss 胜利：发讨伐奖励（金币+经验由 store 处理）
+              if (oppName.includes("组队")) {
+                useGame.getState().bossRaidReward(won);
+              } else {
+                showToast(won ? `实时切磋赢了 ${oppName}！` : `输给了 ${oppName}，下次扳回来！`);
+              }
               refresh();
             }}
           />
