@@ -32,31 +32,35 @@ export interface Stats {
   spd: number;
 }
 
+export type MoveEffectKind = "poison" | "paralyze";
+
 export interface Move {
   id: string;
   name: string;
   power: number;
   element: Element;
   desc: string;
+  /** 命中后概率给对手附加状态 */
+  effect?: { kind: MoveEffectKind; chance: number };
 }
 
 export const MOVE_TACKLE: Move = { id: "tackle", name: "墩墩撞击", power: 40, element: "normal", desc: "圆滚滚的身体撞过去。" };
 const ELEM_SKILLS: Record<Element, { basic: Move; ult: Move }> = {
   fire: {
     basic: { id: "spark", name: "火花蹦蹦", power: 55, element: "fire", desc: "弹出小火星烫对手。" },
-    ult: { id: "flameCharge", name: "烈焰滚冲", power: 85, element: "fire", desc: "裹着火焰滚动冲撞！" },
+    ult: { id: "flameCharge", name: "烈焰滚冲", power: 85, element: "fire", desc: "裹着火焰滚动冲撞！偶尔造成灼伤。", effect: { kind: "poison", chance: 0.2 } },
   },
   water: {
     basic: { id: "waterGun", name: "水枪啾啾", power: 55, element: "water", desc: "呲出高压水柱。" },
-    ult: { id: "bubbleBeam", name: "泡泡光束", power: 85, element: "water", desc: "轰出大泡泡洪流！" },
+    ult: { id: "bubbleBeam", name: "泡泡光束", power: 85, element: "water", desc: "轰出大泡泡洪流！泡泡偶尔会让对手动弹不得。", effect: { kind: "paralyze", chance: 0.15 } },
   },
   grass: {
     basic: { id: "leafBlade", name: "叶叶飞刀", power: 55, element: "grass", desc: "甩出锋利的叶子。" },
-    ult: { id: "vineSlam", name: "藤鞭猛击", power: 85, element: "grass", desc: "藤蔓抽击，力道十足！" },
+    ult: { id: "vineSlam", name: "藤鞭猛击", power: 85, element: "grass", desc: "藤蔓抽击，力道十足！偶尔让对手中毒。", effect: { kind: "poison", chance: 0.15 } },
   },
   electric: {
     basic: { id: "zap", name: "电电麻麻", power: 55, element: "electric", desc: "啪的一声放电。" },
-    ult: { id: "voltRush", name: "十万闪冲", power: 85, element: "electric", desc: "带电冲锋，快如闪电！" },
+    ult: { id: "voltRush", name: "十万闪冲", power: 85, element: "electric", desc: "带电冲锋，快如闪电！容易让对手麻痹。", effect: { kind: "paralyze", chance: 0.2 } },
   },
   normal: {
     basic: { id: "bodySlam", name: "肉肉压压", power: 55, element: "normal", desc: "用肉乎乎的身体压。" },
@@ -64,9 +68,44 @@ const ELEM_SKILLS: Record<Element, { basic: Move; ult: Move }> = {
   },
   shadow: {
     basic: { id: "shadowClaw", name: "暗影爪爪", power: 60, element: "shadow", desc: "影子的爪子挠过去。" },
-    ult: { id: "shadowBurst", name: "影子爆发", power: 90, element: "shadow", desc: "释放积攒的暗影能量！" },
+    ult: { id: "shadowBurst", name: "影子爆发", power: 90, element: "shadow", desc: "释放积攒的暗影能量！偶尔让对手麻痹。", effect: { kind: "paralyze", chance: 0.2 } },
   },
 };
+
+/* ---------------- 奶航专属招式（棒球 ⚾ × 电流 ⚡） ---------------- */
+
+/** 奶航的口头禅，放专属招式时有几率喊出来 */
+export const NAIHANG_CATCHPHRASE = "你想听实话吗？";
+
+export const MOVE_FASTBALL: Move = {
+  id: "fastball", name: "电光速投球", power: 58, element: "electric",
+  desc: "⚡⚾ 带电的速球直塞好球带！容易让对手麻痹。",
+  effect: { kind: "paralyze", chance: 0.25 },
+};
+export const MOVE_TRUTH_BEAM: Move = {
+  id: "truthBeam", name: "你想听实话吗", power: 70, element: "electric",
+  desc: "「你想听实话吗？」——实话就是：这一球你接不住。自身攻击提升。",
+  effect: { kind: "paralyze", chance: 0.1 },
+};
+export const MOVE_CAKE_CRUSH: Move = {
+  id: "cakeCrush", name: "九层蛋糕轰砸", power: 88, element: "normal",
+  desc: "🎂 摘下背上的九层大蛋糕砸向对手！甜到发腻的一击。",
+  effect: { kind: "poison", chance: 0.15 },
+};
+export const MOVE_GRAND_SLAM: Move = {
+  id: "grandSlam", name: "满垒电流全垒打", power: 100, element: "electric",
+  desc: "⚡⚾⚡ 满垒局势，挥出贯岛电流的一击！容易让对手麻痹。",
+  effect: { kind: "paralyze", chance: 0.3 },
+};
+
+/** 奶航专属招式表：按等级解锁（覆盖通用电系表） */
+export function naihangMoves(level: number): Move[] {
+  const list = [MOVE_TACKLE, MOVE_FASTBALL];
+  if (level >= 6) list.push(MOVE_TRUTH_BEAM);
+  if (level >= 10) list.push(MOVE_CAKE_CRUSH);
+  if (level >= 14) list.push(MOVE_GRAND_SLAM);
+  return list;
+}
 
 export function movesForElement(element: Element, level: number): Move[] {
   const list = [MOVE_TACKLE, ELEM_SKILLS[element].basic];
@@ -125,6 +164,8 @@ export function trainCost(current: number): number {
 }
 
 export function movesOf(pet: Pet): Move[] {
+  // 奶航有专属招式表（棒球 × 电流），其他宠物走通用属性表
+  if (pet.speciesId === "naihang") return naihangMoves(pet.level);
   return movesForElement(pet.element, pet.level);
 }
 

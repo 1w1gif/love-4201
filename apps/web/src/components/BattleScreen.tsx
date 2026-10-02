@@ -3,9 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useGame } from "@/store";
 import { petSVG, ELEMENT_NAMES, elementMultiplier, outfitById } from "@maomao/game-core";
-import type { BattleEvent } from "@maomao/game-core";
+import type { BattleEvent, SideStatus, StatusKind } from "@maomao/game-core";
 import { characterSVG } from "@maomao/game-core";
 import { Btn, HpBar, Sprite } from "./Ui";
+import { sfx, startBgm, stopBgm } from "@/lib/sfx";
 
 interface Anim { type: "lunge" | "hit" | "heal" | "shield" | "faint"; side: "player" | "enemy" }
 
@@ -34,6 +35,7 @@ export default function BattleScreen() {
     setDHp({ player: battle.player.hp, enemy: battle.enemy.hp });
     setMsg(meta?.kind === "boss" ? "暗影胖胖王挡在了面前！" : meta?.kind === "pvp" ? `${meta.pvpOpponentName ?? "对方"}接受了切磋！` : meta?.kind === "trainer" ? "大狗粪派出了宠物！" : "野生的胖胖跳了出来！");
     setShowResult(false);
+    if (useGame.getState().soundOn) startBgm("battle");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meta?.speciesId, meta?.level, meta?.kind]);
 
@@ -57,6 +59,7 @@ export default function BattleScreen() {
             setAnim({ type: "hit", side: ev.side });
             setFloat({ side: ev.side, text: `-${ev.amount}`, crit: ev.crit, eff: ev.effective });
             setDHp((h) => ({ ...h, [ev.side]: Math.max(0, h[ev.side] - ev.amount) }));
+            if (ev.crit) sfx.crit(); else sfx.hit();
           }, 560);
           break;
         case "heal":
@@ -64,10 +67,26 @@ export default function BattleScreen() {
             setAnim({ type: "heal", side: ev.side });
             setFloat({ side: ev.side, text: `+${ev.amount}` });
             setDHp((h) => ({ ...h, [ev.side]: h[ev.side] + ev.amount }));
+            sfx.heal();
           }, 480);
           break;
         case "defend":
-          push(() => setAnim({ type: "shield", side: ev.side }), 380);
+          push(() => { setAnim({ type: "shield", side: ev.side }); sfx.ballShake(); }, 380);
+          break;
+        case "status":
+          push(() => {
+            setAnim({ type: "shield", side: ev.side });
+            setFloat({ side: ev.side, text: statusFloatText(ev.kind, ev.on) });
+            sfx.ballShake();
+          }, 520);
+          break;
+        case "statusDamage":
+          push(() => {
+            setAnim({ type: "hit", side: ev.side });
+            setFloat({ side: ev.side, text: `${ev.kind === "poison" ? "☠" : "⚡"} -${ev.amount}` });
+            setDHp((h) => ({ ...h, [ev.side]: Math.max(0, h[ev.side] - ev.amount) }));
+            sfx.hit();
+          }, 500);
           break;
         case "faint":
           push(() => setAnim({ type: "faint", side: ev.side }), 620);
@@ -76,13 +95,19 @@ export default function BattleScreen() {
           push(() => {
             setAnim({ type: ev.success ? "faint" : "hit", side: "enemy" });
             setFloat({ side: "enemy", text: ev.success ? "🎯 捉住了！" : "🎯 挣脱了…" });
+            if (ev.success) sfx.caught(); else sfx.breakout();
           }, 700);
           break;
         case "message":
           push(() => setMsg(ev.text), 900);
           break;
         case "end":
-          push(() => setShowResult(true), 250);
+          push(() => {
+            setShowResult(true);
+            if (ev.result === "win") sfx.victory();
+            else if (ev.result === "lose") sfx.defeat();
+            else if (ev.result === "caught") sfx.caught();
+          }, 250);
           break;
       }
     }
@@ -158,6 +183,7 @@ export default function BattleScreen() {
             </div>
             <HpBar hp={dHp.enemy} max={battle.enemy.maxHp} />
             <div className="battle-card-hpnum">{dHp.enemy}/{battle.enemy.maxHp}</div>
+            <StatusBadges s={battle.enemyStatus} />
           </div>
           <div className={`battle-sprite enemy-sprite ${enemyAnimClass}`}>
             <Sprite svg={petSVG(battle.enemy.look)} />
@@ -191,6 +217,7 @@ export default function BattleScreen() {
             </div>
             <HpBar hp={dHp.player} max={battle.player.maxHp} />
             <div className="battle-card-hpnum">{dHp.player}/{battle.player.maxHp}</div>
+            <StatusBadges s={battle.playerStatus} />
           </div>
         </div>
 
@@ -205,16 +232,20 @@ export default function BattleScreen() {
               <div className="battle-moves">
                 {battle.player.moves.map((m, i) => {
                   const eff = elementMultiplier(m.element, battle.enemy.element);
+                  const isNh = m.id === "fastball" || m.id === "truthBeam" || m.id === "cakeCrush" || m.id === "grandSlam";
+                  const nhIcon = m.id === "cakeCrush" ? "🎂" : "⚾";
                   return (
                     <button
                       key={m.id}
-                      className="move-btn"
+                      className={`move-btn ${isNh ? "naihang-move" : ""}`}
                       disabled={busy || battle.over}
                       onClick={() => doAction({ kind: "move", moveIndex: i })}
                     >
                       <span className="move-name">
                         <i className="el-dot" style={{ background: elColor[m.element] }} />
+                        {isNh && <span className="nh-ico">{nhIcon}</span>}
                         {m.name}
+                        {m.id === "truthBeam" && <em className="nh-truth">「你想听实话吗」</em>}
                         {eff > 1 && <em className="eff-up">克制!</em>}
                         {eff < 1 && eff !== 1 && <em className="eff-down">收效差</em>}
                       </span>
@@ -253,6 +284,22 @@ export default function BattleScreen() {
                     </button>
                   );
                 })}
+                <button
+                  className="move-btn"
+                  disabled={busy || battle.over || (items["herb-cure"] ?? 0) <= 0 || (battle.playerStatus.poison <= 0 && battle.playerStatus.paralyze <= 0)}
+                  onClick={() => doAction({ kind: "item", heal: 0, effect: "cure" })}
+                >
+                  <span className="move-name">🌿 解毒草</span>
+                  <span className="move-power">解除异常 ×{items["herb-cure"] ?? 0}</span>
+                </button>
+                <button
+                  className="move-btn"
+                  disabled={busy || battle.over || (items["power-fruit"] ?? 0) <= 0 || battle.playerStatus.empower > 0}
+                  onClick={() => doAction({ kind: "item", heal: 0, effect: "empower" })}
+                >
+                  <span className="move-name">🍎 力量果实</span>
+                  <span className="move-power">攻击强化 ×{items["power-fruit"] ?? 0}</span>
+                </button>
                 {meta.kind === "wild" && (["ball-basic", "ball-great"] as const).map((id) => {
                   const names = { "ball-basic": "🔴 精灵球", "ball-great": "🔵 超级球" };
                   const count = items[id] ?? 0;
@@ -303,7 +350,7 @@ export default function BattleScreen() {
                 <p>{battle.enemy.name}（Lv.{battle.enemy.level}）加入了宠物仓库，快去冒险手册看看吧！</p>
               </>
             )}
-            <Btn tone="sun" onClick={clearBattle}>回到地图</Btn>
+            <Btn tone="sun" onClick={() => { stopBgm(); clearBattle(); }}>回到地图</Btn>
           </div>
         )}
       </div>
@@ -320,4 +367,22 @@ function FloatText({ text, crit, eff }: { text: string; crit?: boolean; eff?: st
       {eff === "weak" && <em className="weak">效果不佳…</em>}
     </div>
   );
+}
+
+function statusFloatText(kind: StatusKind, on: boolean): string {
+  if (!on) return "状态解除";
+  if (kind === "poison") return "☠ 中毒了!";
+  if (kind === "paralyze") return "⚡ 麻痹了!";
+  if (kind === "empower") return "💪 攻击提升!";
+  return "🛡 护盾展开!";
+}
+
+function StatusBadges({ s }: { s: SideStatus }) {
+  const badges: string[] = [];
+  if (s.poison > 0) badges.push("☠");
+  if (s.paralyze > 0) badges.push("⚡");
+  if (s.empower > 0) badges.push("💪");
+  if (s.guard > 0) badges.push("🛡");
+  if (badges.length === 0) return null;
+  return <div className="status-badges">{badges.map((b, i) => <i key={i}>{b}</i>)}</div>;
 }

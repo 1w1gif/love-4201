@@ -74,13 +74,19 @@ const SPECIES: PetSpecies[] = [
     id: "naihang", name: "奶航", element: "electric", rarity: 3,
     base: { hp: 58, atk: 36, def: 30, spd: 34 },
     look: { body: "chubby", ears: "none", tail: "none", pattern: "belly", eyes: "happy", mouth: "open", colors: { main: "#f7d54a", sub: "#fae28a", light: "#fdf3c8", deep: "#c9971f" }, crest: "none", glasses: true },
-    flavor: "传说级的电系胖胖，戴着祖传的小黑框眼镜。据说眼镜后面藏着闪电，笑起来的时候整座岛的路灯都会亮。",
+    flavor: "传说级的电系胖胖，戴着祖传的小黑框眼镜，背着一张九层大蛋糕，谁也不知道它什么时候掏出球棒。口头禅是「你想听实话吗」——据说听到这句话的对手都接不住下一球。",
   },
   {
     id: "pangpangwang", name: "暗影胖胖王", element: "shadow", rarity: 3,
     base: { hp: 70, atk: 34, def: 30, spd: 24 },
     look: { body: "chubby", ears: "pointy", tail: "curl", pattern: "belly", eyes: "round", mouth: "grin", colors: ELEMENT_PALETTES.shadow, crest: "shadow" },
     flavor: "传说中森林最深处的大块头，其实是被误会的大好胖胖。",
+  },
+  {
+    id: "lan", name: "湖心守护者·澜", element: "water", rarity: 3,
+    base: { hp: 74, atk: 36, def: 32, spd: 26 },
+    look: { body: "cloud", ears: "fin", tail: "curl", pattern: "spots", eyes: "sleepy", mouth: "wavy", colors: { ...ELEMENT_PALETTES.water, main: "#3f7fc0" }, crest: "water" },
+    flavor: "星尘湖深处的守护者，背着熄灭的星光在湖底散步，哭起来会下小雨。",
   },
 ];
 
@@ -170,7 +176,7 @@ export function wildSpeciesFor(zone: "meadow" | "forest", stepSeed: number): Pet
     const pool = SPECIES.filter((s) => s.element !== "shadow" && s.rarity <= 2);
     return pick(rng, pool);
   }
-  const pool = SPECIES.filter((s) => (s.element === "shadow" || s.rarity <= 3) && s.id !== "naihang");
+  const pool = SPECIES.filter((s) => (s.element === "shadow" || s.rarity <= 3) && s.id !== "naihang" && s.id !== "pangpangwang" && s.id !== "lan");
   return pick(rng, pool);
 }
 
