@@ -5,11 +5,12 @@ import { useGame } from "@/store";
 import { characterSVG, outfitById } from "@maomao/game-core";
 import { plazaGet, plazaPost, tierOf } from "@/lib/plaza-client";
 import type { PlazaData, PlazaPlayerPublic } from "@/lib/plaza-client";
+import PlazaLive from "./PlazaLive";
 import { Btn, Sprite } from "./Ui";
 
 export default function Plaza() {
   const { account, setAccount, openPlaza, showToast, startPvp, pet, look, outfitId, playerName } = useGame();
-  const [tab, setTab] = useState<"players" | "bonds" | "rank">("players");
+  const [tab, setTab] = useState<"players" | "bonds" | "rank" | "live">("players");
   const [data, setData] = useState<PlazaData | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState(false);
@@ -60,6 +61,8 @@ export default function Plaza() {
     setBusy(false);
     if (r.error || r.points === undefined || !r.tier) { showToast(r.error ?? "问候失败"); return; }
     showToast(`和 ${p.name} 打过招呼啦！亲密度 ${r.points}（${r.tier.name}）`);
+    useGame.getState().trackStat("bonds", 0); // 刷新 maxLevel 等无关，仅保证 stats 存在
+    useGame.getState().trackStat("dailyGreet");
     refresh();
   };
 
@@ -70,6 +73,7 @@ export default function Plaza() {
     setBusy(false);
     if (r.error) { showToast(r.error); return; }
     showToast(accept ? `你和 ${r.name} 的羁绊成立啦！` : "已婉拒对方的申请");
+    if (accept) useGame.getState().trackStat("bonds");
     refresh();
   };
 
@@ -100,6 +104,7 @@ export default function Plaza() {
           <button className={`panel-tab ${tab === "players" ? "on" : ""}`} onClick={() => setTab("players")}>
             训练家（{players.length}）
           </button>
+          <button className={`panel-tab ${tab === "live" ? "on" : ""}`} onClick={() => setTab("live")}>🔥 大厅</button>
           <button className={`panel-tab ${tab === "rank" ? "on" : ""}`} onClick={() => setTab("rank")}>🏆 排行榜</button>
           <button className={`panel-tab ${tab === "bonds" ? "on" : ""}`} onClick={() => setTab("bonds")}>
             我的羁绊（{myBonds.length}）{requests.length > 0 && <em className="req-badge">{requests.length}</em>}
@@ -114,6 +119,17 @@ export default function Plaza() {
               <Btn tone="sun" onClick={refresh}>↻ 重试</Btn>
             </div>
           </div>
+        )}
+
+        {data && tab === "live" && (
+          <PlazaLive
+            token={account.token}
+            myName={account.name}
+            onBattleEnd={(won, oppName) => {
+              showToast(won ? `实时切磋赢了 ${oppName}！` : `输给了 ${oppName}，下次扳回来！`);
+              refresh();
+            }}
+          />
         )}
 
         {data && tab === "rank" && (
