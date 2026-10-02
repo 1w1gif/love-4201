@@ -342,6 +342,12 @@ h1, h2, h3, p { margin: 0; }
   background: rgba(255,253,246,0.92); border: 2px solid var(--cocoa); border-radius: 999px;
   font-size: 10px; font-weight: 800; padding: 1px 8px; white-space: nowrap;
 }
+/* 王者英雄 NPC：金色名牌 */
+.npc-name.hero-name {
+  background: linear-gradient(180deg, #ffe9a8, #f7d54a);
+  border-color: #a8791f; color: #5a3d0a;
+  box-shadow: 0 1px 0 rgba(168, 121, 31, 0.5);
+}
 .talk-bubble {
   position: absolute; top: -34px; left: 50%; transform: translateX(-50%);
   background: var(--sun); border: 2.5px solid var(--cocoa); border-radius: 50%;
@@ -422,6 +428,13 @@ h1, h2, h3, p { margin: 0; }
   radial-gradient(900px 400px at 50% 110%, rgba(30,20,40,0.35) 0%, transparent 60%),
   linear-gradient(180deg, #6b5a85 0%, #8a7a9e 50%, #4f8565 100%); }
 .arena-boss .battle-msg { background: rgba(255,253,246,0.95); }
+/* 英雄切磋：金红竞技场 */
+.arena-hero { background:
+  radial-gradient(900px 400px at 50% 110%, rgba(120,50,20,0.22) 0%, transparent 60%),
+  radial-gradient(700px 320px at 20% -5%, #ffe9a8 0%, transparent 55%),
+  linear-gradient(180deg, #f2b56a 0%, #e89a5f 45%, #c96a3f 100%); }
+.arena-hero .battle-msg { background: rgba(255,251,240,0.95); }
+.enemy-trainer { left: auto; right: -26%; transform: scaleX(-1); }
 .battle-hud { display: flex; justify-content: space-between; padding: 14px 18px; font-weight: 800; }
 .battle-turn, .battle-zone-name {
   background: rgba(255,253,246,0.9); border: 3px solid var(--cocoa); border-radius: 999px; padding: 3px 14px; font-size: 13px;
@@ -489,16 +502,22 @@ h1, h2, h3, p { margin: 0; }
 .gm-admin-msg { font-size: 13px; font-weight: 700; color: var(--cocoa); background: rgba(246,213,92,0.25); border-radius: 8px; padding: 6px 10px; margin: 6px 0; }
 .gm-admin-list { max-height: 240px; overflow-y: auto; margin: 6px 0 10px; }
 
-/* ---------------- 战斗结果 CG 演出 ---------------- */
+/* ---------------- 战斗结果 CG 演出（王者风） ---------------- */
 .cg-layer {
   position: fixed; inset: 0; z-index: 220; background: #14100f;
   display: flex; align-items: center; justify-content: center; overflow: hidden;
   cursor: pointer; animation: cgIn 0.3s ease;
 }
+/* 上下电影黑边渐晕 */
+.cg-layer::before, .cg-layer::after {
+  content: ""; position: absolute; left: 0; right: 0; height: 20%; z-index: 1; pointer-events: none;
+}
+.cg-layer::before { top: 0; background: linear-gradient(180deg, rgba(0,0,0,0.8), transparent); }
+.cg-layer::after { bottom: 0; background: linear-gradient(0deg, rgba(0,0,0,0.8), transparent); }
 @keyframes cgIn { from { opacity: 0; } to { opacity: 1; } }
 .cg-slide {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  opacity: 0; animation: cgSlide 1.5s ease-in-out both;
+  opacity: 0; animation: cgSlide 1.6s ease-in-out both;
 }
 .cg-slide img { max-width: 100%; max-height: 100%; object-fit: contain; }
 @keyframes cgSlide {
@@ -507,15 +526,28 @@ h1, h2, h3, p { margin: 0; }
   82% { opacity: 1; transform: scale(1); }
   100% { opacity: 0; transform: scale(0.98); }
 }
-.cg-caption {
-  position: absolute; top: 4%; left: 50%; transform: translateX(-50%);
-  font-size: 28px; font-weight: 900; color: #fff;
-  text-shadow: 0 3px 0 var(--cocoa), 0 0 14px #000; z-index: 2; white-space: nowrap;
+/* 王者风大字标题 */
+.cg-title { position: absolute; top: 7%; left: 0; right: 0; text-align: center; z-index: 2; pointer-events: none; animation: cgTitle 0.9s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+.cg-title .zh { display: block; font-size: 76px; font-weight: 900; letter-spacing: 30px; text-indent: 30px; line-height: 1.1; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; }
+.cg-title .en { display: block; font-size: 16px; font-weight: 800; letter-spacing: 12px; text-indent: 12px; margin-top: 6px; }
+.cg-title.win .zh {
+  background: linear-gradient(180deg, #fff8d6 8%, #ffd75e 48%, #a8741a 92%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 0 18px rgba(255, 200, 60, 0.55));
 }
+.cg-title.win .en { color: #ffd75e; text-shadow: 0 0 12px rgba(255, 200, 60, 0.5); }
+.cg-title.lose .zh {
+  background: linear-gradient(180deg, #e8eefb 8%, #93a2c0 48%, #39435c 92%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 0 14px rgba(140, 160, 200, 0.45));
+}
+.cg-title.lose .en { color: #93a2c0; }
+@keyframes cgTitle { 0% { opacity: 0; transform: scale(2.2); filter: blur(8px); } 60% { opacity: 1; } 100% { opacity: 1; transform: scale(1); filter: blur(0); } }
 .cg-skip {
-  position: absolute; bottom: 4%; right: 5%;
-  font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.78);
-  background: rgba(0,0,0,0.35); border-radius: 999px; padding: 4px 12px; z-index: 2;
+  position: absolute; bottom: 5%; right: 5%;
+  font-size: 13px; font-weight: 700; color: rgba(255,255,255,0.75);
+  background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.25);
+  border-radius: 999px; padding: 4px 12px; z-index: 2;
 }
 
 .battle-msg {
@@ -556,6 +588,10 @@ h1, h2, h3, p { margin: 0; }
 .move-btn.naihang-move:hover:not(:disabled) { background: #fff3b8; }
 .nh-ico { font-size: 15px; }
 .nh-truth { background: #f7d54a; font-weight: 800; }
+/* 王者英雄招式：金红描边 */
+.move-btn.hero-move { background: #fff4ec; border-color: #b34a2f; box-shadow: 2px 2px 0 #d97a4f; }
+.move-btn.hero-move:hover:not(:disabled) { background: #ffe8d8; }
+.hero-tag { background: #f2c94c; font-weight: 800; }
 
 /* ============ 实时大厅：聊天 + 在线切磋 ============ */
 .live-wrap { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
@@ -607,6 +643,23 @@ h1, h2, h3, p { margin: 0; }
 .spar-result {
   text-align: center; font-size: 22px; font-weight: 900; background: var(--sun);
   border: 3px solid var(--cocoa); border-radius: 12px; padding: 12px;
+}
+/* HUD 醒目大厅入口 */
+.btn.hall-btn {
+  font-size: 15px; font-weight: 900; padding: 6px 18px;
+  animation: hallGlow 2.2s ease-in-out infinite;
+}
+@keyframes hallGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(247, 213, 74, 0.7); }
+  50% { box-shadow: 0 0 0 8px rgba(247, 213, 74, 0); }
+}
+/* 地图上的其他在线玩家 */
+.entity.online-player { transition: left 0.4s linear, top 0.4s linear; opacity: 0.92; }
+.online-name {
+  position: absolute; top: -14px; left: 50%; transform: translateX(-50%);
+  font-size: 10px; font-weight: 800; color: #fff; background: #5fae8e;
+  border: 2px solid var(--cocoa); border-radius: 999px; padding: 0 7px;
+  white-space: nowrap; pointer-events: none;
 }
 .battle-result {
   position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;

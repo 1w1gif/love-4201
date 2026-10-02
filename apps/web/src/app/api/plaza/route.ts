@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
   if (d1) {
     const live = await handleLiveAction(body.action, body, d1);
     if (live !== null) return NextResponse.json(live);
-  } else if (["sparChallenge", "sparAccept", "sparMove", "sparMyRoom", "sparState", "sparCancel", "sparDecline", "chatPost", "chatList"].includes(body.action)) {
+  } else if (["sparChallenge", "sparAccept", "sparMove", "sparMyRoom", "sparState", "sparCancel", "sparDecline", "chatPost", "chatList", "worldPlayers"].includes(body.action)) {
     return NextResponse.json({ error: "实时对战需要云端数据库（D1）环境" }, { status: 400 });
   }
   let result: unknown;

@@ -145,18 +145,61 @@ export async function sparSaveState(db: D1Database, roomId: string, state: SparS
 
 /** 在线玩家数：最近 35 秒 sync 过档案的人数 */
 export async function presenceCount(db: D1Database): Promise<number> {
-  await db.prepare(`CREATE TABLE IF NOT EXISTS presence (player_id TEXT PRIMARY KEY, seen_at INTEGER NOT NULL)`).run();
+  await ensurePresence(db);
   await db.prepare(`DELETE FROM presence WHERE seen_at < ?`).bind(Date.now() - PRESENCE_TTL).run();
   const r = await db.prepare(`SELECT COUNT(*) AS n FROM presence`).first<{ n: number }>();
   return r?.n ?? 0;
 }
 
-export async function presenceTouch(db: D1Database, playerId: string): Promise<void> {
-  await db.prepare(`CREATE TABLE IF NOT EXISTS presence (player_id TEXT PRIMARY KEY, seen_at INTEGER NOT NULL)`).run();
+async function ensurePresence(db: D1Database): Promise<void> {
+  await db.prepare(`CREATE TABLE IF NOT EXISTS presence (
+    player_id TEXT PRIMARY KEY,
+    seen_at INTEGER NOT NULL,
+    name TEXT DEFAULT '',
+    zone TEXT DEFAULT '',
+    px INTEGER DEFAULT 0,
+    py INTEGER DEFAULT 0,
+    look_json TEXT DEFAULT ''
+  )`).run();
+}
+
+/** 心跳 + 位置上报（World 地图移动时节流调用） */
+export async function presenceUpdate(
+  db: D1Database, playerId: string, name: string, zone: string, px: number, py: number, lookJson: string
+): Promise<void> {
+  await ensurePresence(db);
   await db.prepare(
-    `INSERT INTO presence (player_id, seen_at) VALUES (?, ?)
-     ON CONFLICT(player_id) DO UPDATE SET seen_at = excluded.seen_at`
-  ).bind(playerId, Date.now()).run();
+    `INSERT INTO presence (player_id, seen_at, name, zone, px, py, look_json) VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(player_id) DO UPDATE SET seen_at = excluded.seen_at, name = excluded.name,
+       zone = excluded.zone, px = excluded.px, py = excluded.py, look_json = excluded.look_json`
+  ).bind(playerId, Date.now(), name, zone, px, py, lookJson).run();
+}
+
+export interface WorldPlayer {
+  playerId: string;
+  name: string;
+  zone: string;
+  px: number;
+  py: number;
+  look: unknown;
+}
+
+/** 同场景的其他在线玩家（地图同屏用） */
+export async function worldPlayers(db: D1Database, zone: string, excludeId: string): Promise<WorldPlayer[]> {
+  await ensurePresence(db);
+  await db.prepare(`DELETE FROM presence WHERE seen_at < ?`).bind(Date.now() - PRESENCE_TTL).run();
+  const rs = await db.prepare(
+    `SELECT player_id, name, zone, px, py, look_json FROM presence
+     WHERE zone = ? AND player_id != ? AND seen_at > ?`
+  ).bind(zone, excludeId, Date.now() - PRESENCE_TTL).all<Record<string, unknown>>();
+  return (rs.results ?? []).map((r) => ({
+    playerId: String(r.player_id),
+    name: String(r.name),
+    zone: String(r.zone),
+    px: Number(r.px),
+    py: Number(r.py),
+    look: r.look_json ? JSON.parse(String(r.look_json)) : null,
+  }));
 }
 
 export async function chatPost(db: D1Database, playerId: string, name: string, text: string): Promise<ChatMsg> {

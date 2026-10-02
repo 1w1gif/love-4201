@@ -11,14 +11,20 @@ import type { BattleState, Pet, PlayerAction } from "@maomao/game-core";
 import type { BattleEvent } from "@maomao/game-core";
 import { DIALOGS } from "@maomao/game-core";
 import type { DialogLine } from "@maomao/game-core";
-import { ZONES, tileAt, isSolid, NPCS } from "@maomao/game-core";
+import { ZONES, tileAt, isSolid, NPCS, WILD_POOLS, HERO_LEVELS } from "@maomao/game-core";
+import { HERO_NPCS, HERO_SPECIES_IDS } from "@maomao/game-core";
+import type { HeroDef } from "@maomao/game-core";
+import { SHOP_ITEMS, OUTFITS } from "@maomao/game-core";
+import {
+  ACHIEVEMENTS, checkAchievements, dailyTasksFor, todayKey, nextStreak, signinReward,
+} from "@maomao/game-core";
 import { plazaPost } from "@/lib/plaza-client";
 import type { PlazaPlayerPublic } from "@/lib/plaza-client";
 
 export type Phase = "title" | "quiz" | "create" | "pickPet" | "world";
 
 export interface BattleMeta {
-  kind: "wild" | "trainer" | "boss" | "pvp";
+  kind: "wild" | "trainer" | "boss" | "pvp" | "hero";
   speciesId: string;
   level: number;
   rewardCoins: number;
@@ -28,9 +34,24 @@ export interface BattleMeta {
   loseDialog?: string;
   pvpOpponentId?: string;
   pvpOpponentName?: string;
+  /** hero 战：对应英雄 NPC 定义（对话/捕捉引导用） */
+  heroId?: string;
+  /** hero 战：召唤出来的英雄胖胖名字 */
+  heroPetName?: string;
 }
 
 export type StarterSpecies = import("@maomao/game-core").PetSpecies;
+
+/** 管理员面板（GM）可执行的操作 */
+export type GmAction =
+  | "coins"      // +5000 金币
+  | "items"      // 全道具 ×9
+  | "outfits"    // 解锁全部衣服
+  | "maxLevel"   // 宠物升到满级
+  | "heal"       // 恢复满体力
+  | "ch1done"    // 一键通关第一章
+  | "ch2entry"   // 解锁第二章入口
+  | "ch2done";   // 一键通关第二章
 
 interface DialogState {
   lines: DialogLine[];
@@ -63,10 +84,27 @@ export interface GameState {
   shopOpen: boolean;
   panelOpen: boolean;
   plazaOpen: boolean;
+  /** 广场打开时落在哪个标签（大厅/训练家/排行/羁绊） */
+  plazaTab: "live" | "players" | "rank" | "bonds";
+  dailyOpen: boolean;
+  /** 管理员面板（隐藏入口：标题连点 7 下或输入 4201） */
+  gmOpen: boolean;
   toast: string | null;
   chapterDone: boolean;
+  chapter2Done: boolean;
   /** 广场账号（服务端注册的训练家身份） */
   account: { token: string; playerId: string; name: string } | null;
+
+  /** 成就/日常/签到状态 */
+  stats: Record<string, number>;
+  achievementsClaimed: Record<string, boolean>;
+  dailyDate: string;
+  dailyProgress: Record<string, number>;
+  dailyClaimed: Record<string, boolean>;
+  signin: { lastDate: string; streak: number; totalDays: number };
+  soundOn: boolean;
+  /** 新达成、待展示的成就 id（瞬态） */
+  pendingAchievement: string | null;
 
   // actions
   goto: (p: Phase) => void;
@@ -83,22 +121,38 @@ export interface GameState {
   closeDialog: () => void;
 
   startBattle: (meta: BattleMeta) => void;
+  /** 王者英雄 NPC 对话：召唤宠物切磋 / 打赢后可捕捉 */
+  heroTalk: (hero: HeroDef) => void;
   battleAction: (action: PlayerAction) => void;
   clearBattle: () => void;
   endBattleProcessed: () => void;
 
   openShop: (v: boolean) => void;
   openPanel: (v: boolean) => void;
+  openDaily: (v: boolean) => void;
   setActivePet: (uid: string) => void;
-  openPlaza: (v: boolean) => void;
+  openPlaza: (v: boolean, tab?: "live" | "players" | "rank" | "bonds") => void;
+  openGm: (v: boolean) => void;
+  /** 管理员面板操作：直接改写存档数值 */
+  gmDo: (what: GmAction) => void;
   setAccount: (a: GameState["account"]) => void;
   startPvp: (opponent: PlazaPlayerPublic) => void;
+  /** 击杀/事件钩子：更新统计并检查成就/日常 */
+  trackStat: (key: string, delta?: number) => void;
+  claimAchievement: (id: string) => void;
+  claimDaily: (id: string) => void;
+  doSignin: () => void;
+  dismissAchievement: () => void;
+  setSoundOn: (v: boolean) => void;
+  claimAllReady: () => void;
   buyItem: (id: string, price: number) => void;
   buyOutfit: (id: string, price: number) => void;
   equipOutfit: (id: string) => void;
   train: (stat: "atk" | "def" | "spd") => void;
   usePotion: (id: string, heal: number) => void;
   revive: (id: string) => void;
+  /** 喂经验糖果：直接给主战宠物加经验 */
+  useCandy: (id: string) => void;
   showToast: (t: string) => void;
   resetSave: () => void;
 }
@@ -145,9 +199,22 @@ export const useGame = create<GameState>()(
       shopOpen: false,
       panelOpen: false,
       plazaOpen: false,
+      plazaTab: "players",
+      dailyOpen: false,
+      gmOpen: false,
       toast: null,
       chapterDone: false,
+      chapter2Done: false,
       account: null,
+
+      stats: {},
+      achievementsClaimed: {},
+      dailyDate: "",
+      dailyProgress: {},
+      dailyClaimed: {},
+      signin: { lastDate: "", streak: 0, totalDays: 0 },
+      soundOn: true,
+      pendingAchievement: null,
 
       goto: (p) => set({ phase: p }),
       newGame: () =>
@@ -159,7 +226,7 @@ export const useGame = create<GameState>()(
           items: { "potion-s": 2, "potion-l": 0, revive: 0 },
           flags: {}, zone: "village", px: 8, py: 8,
           battle: null, battleMeta: null, dialog: null, shopOpen: false,
-          panelOpen: false, chapterDone: false,
+          panelOpen: false, chapterDone: false, chapter2Done: false,
         }),
       setAffinity: (e) => set({ affinity: e, phase: "create" }),
       setLook: (l) => set({ look: l }),
@@ -189,7 +256,7 @@ export const useGame = create<GameState>()(
             const now = Date.now();
             if (now - lastGateToastAt > 4000) {
               lastGateToastAt = now;
-              get().showToast("好像还不知道要去哪……先跟宇航聊聊吧！");
+              get().showToast("这条路好像还没打通……找找附近的伙伴聊聊吧！");
             }
             return;
           }
@@ -197,17 +264,15 @@ export const useGame = create<GameState>()(
           return;
         }
         set({ px: nx, py: ny });
-        // Boss 触发
-        if (tileAt(zone, nx, ny) === "B" && !st.flags.bossDone) {
-          get().say(DIALOGS.bossIntro, "battle:boss");
+        // Boss 触发（每张地图有自己的 Boss 配置）
+        if (tileAt(zone, nx, ny) === "B" && zone.boss && !st.flags[zone.boss.flag]) {
+          get().say(DIALOGS[zone.boss.intro], zone.boss.battle);
           return;
         }
-        // 遇敌
+        // 遇敌（物种池按地图配置）
         const enc = zone.encounter;
         if (enc && tileAt(zone, nx, ny) === "t" && Math.random() < enc.rate) {
-          const speciesPool = st.zone === "meadow"
-            ? ["yaya", "paopao", "pangpi", "diandian", "guagua"]
-            : ["yingying", "taitai", "tuanzi", "lala", "yanqiu"];
+          const speciesPool = WILD_POOLS[st.zone] ?? WILD_POOLS.meadow;
           const sid = speciesPool[Math.floor(Math.random() * speciesPool.length)];
           const level = enc.levels[0] + Math.floor(Math.random() * (enc.levels[1] - enc.levels[0] + 1));
           get().startBattle({
@@ -234,6 +299,10 @@ export const useGame = create<GameState>()(
               case "elder":
                 if (!st.flags.intro) get().say(DIALOGS.elderIntro, "flag:intro");
                 else if (st.flags.bossDone && !st.flags.elderFinal) get().say(DIALOGS.bossWin.filter((l) => l.speaker === "宇航"), "flag:elderFinal");
+                else if (st.flags.boss2Done && !st.flags.elderFinal2) get().say([
+                  { speaker: "宇航", text: "星光湖的星星全亮啦！昨晚全村都在湖边看星星，热闹得很！" },
+                  { speaker: "宇航", text: "两章大冒险都完成的你，已经是传说级的训练家了！" },
+                ], "flag:elderFinal2");
                 else get().say([{ speaker: "宇航", text: "草原和森林都在东边，累了就回村歇歇脚～" }]);
                 return;
               case "villager":
@@ -248,8 +317,26 @@ export const useGame = create<GameState>()(
                 return;
               case "friend":
                 if (!st.flags.meadowEvent) get().say(DIALOGS.meadowEvent, "flag:meadowEvent+items");
+                else if (st.flags.bossDone && !st.flags.ch2Start) get().say([
+                  { speaker: "旅人小圆", text: "森林深处的谜团解开了？厉害！对了，森林东边的出口好像有新动静……" },
+                  { speaker: "旅人小圆", text: "穿过它就是星光湖畔。听说最近湖里的星光在熄灭，你去看看吧！" },
+                ]);
                 else get().say([{ speaker: "旅人小圆", text: "森林的入口已经打开啦，一切拜托你了！" }]);
                 return;
+              case "mystic":
+                if (!st.flags.ch2Start) get().say(DIALOGS.mysticMeet, "flag:ch2Start+items2");
+                else get().say(DIALOGS.mysticAfter);
+                return;
+              case "keeper":
+                if (!st.flags.keeperTalked) get().say(DIALOGS.keeperPre, "flag:keeperTalked");
+                else get().say(DIALOGS.keeperAfter);
+                return;
+              case "hero": {
+                const hero = HERO_NPCS.find((h) => h.id === npc.id);
+                if (!hero) return;
+                get().heroTalk(hero);
+                return;
+              }
             }
           }
         }
@@ -286,6 +373,24 @@ export const useGame = create<GameState>()(
           set({ flags: { ...st.flags, firstCatchHint: true } });
           setTimeout(() => get().showToast("提示：野生的胖胖可以在「背包」里用精灵球捕捉，血越少越好抓！"), 1200);
         }
+        // 英雄战：召唤台词 + 英雄胖胖可捕捉（抓到即"收服英雄本人"）
+        if (meta.kind === "hero") {
+          const hero = HERO_NPCS.find((h) => h.id === meta.heroId);
+          if (hero) {
+            setTimeout(() => get().showToast(`${hero.name}：「${hero.summonLine}」`), 900);
+          }
+          set({
+            battle: createBattle(player, enemy, { canRun: true }),
+            battleMeta: meta,
+            battleEvents: [],
+          });
+          get().trackStat("battles");
+          get().trackStat("dailyBattles");
+          return;
+        }
+        // 逃跑/失败也计入总战斗场次
+        get().trackStat("battles");
+        get().trackStat("dailyBattles");
         set({
           battle: createBattle(player, enemy, { canRun: meta.kind === "wild" }),
           battleMeta: meta,
@@ -306,15 +411,18 @@ export const useGame = create<GameState>()(
           set({ items: { ...st.items, [ballId]: st.items[ballId] - 1 } });
         }
         if (action.kind === "item") {
-          // 消耗品：自动找奶瓶
-          const meta = st.battleMeta;
-          const heal = action.heal;
-          const itemId = heal > 60 ? "potion-l" : "potion-s";
+          // 消耗品：按效果找对应道具
+          const itemId = action.effect === "cure"
+            ? "herb-cure"
+            : action.effect === "empower"
+              ? "power-fruit"
+              : action.heal > 60 ? "potion-l" : "potion-s";
           if ((st.items[itemId] ?? 0) <= 0) {
-            get().showToast("奶瓶用完啦！");
+            get().showToast(itemId === "herb-cure" ? "解毒草用完啦！" : itemId === "power-fruit" ? "力量果实用完啦！" : "奶瓶用完啦！");
             return;
           }
           set({ items: { ...st.items, [itemId]: st.items[itemId] - 1 } });
+          get().trackStat("itemsUsed");
         }
         const events = takeTurn(st.battle, action);
         set({ battle: { ...st.battle }, battleEvents: events });
@@ -326,8 +434,36 @@ export const useGame = create<GameState>()(
       clearBattle: () => set({ battle: null, battleMeta: null, battleEvents: [] }),
       endBattleProcessed: () => set({ battleEvents: [] }),
 
+      heroTalk: (hero) => {
+        const st = get();
+        const beaten = !!st.flags[`heroBeat_${hero.id}`];
+        const petName = speciesById(hero.petSpeciesId).name;
+        const lines: DialogLine[] = [];
+        if (!st.flags[`heroMet_${hero.id}`]) {
+          lines.push({ speaker: hero.name, text: `${hero.title}·${hero.name}，在此有礼了。你是圆滚滚村的训练家吧？` });
+          lines.push({ speaker: hero.name, text: `我在岛上修行，闲来无事就想找人过两招。我的搭档「${petName}」也想活动活动筋骨。` });
+        }
+        if (!beaten) {
+          lines.push({ speaker: hero.name, text: hero.summonLine });
+          lines.push({ speaker: hero.name, text: `来吧，切磋一场！赢了的话……嘿嘿，任你处置。` });
+          get().say(lines, `battle:hero_${hero.id}`);
+        } else {
+          // 打赢过：重复切磋 or 引导捕捉（英雄本人也能被收服成宠物！）
+          if (!st.flags[`heroCaught_${hero.id}`]) {
+            lines.push({ speaker: hero.name, text: hero.loseLine });
+            lines.push({ speaker: hero.name, text: `不服气？那再来！——这次我可不会放水了。对了……你要是想用精灵球收服我本人，我也不拦你，输了就跟你走！` });
+            get().say(lines, `battle:hero_${hero.id}`);
+          } else {
+            lines.push({ speaker: hero.name, text: hero.loseLine });
+            lines.push({ speaker: hero.name, text: `随时欢迎再来切磋！我的搭档也在等你哦。` });
+            get().say(lines, `battle:hero_${hero.id}`);
+          }
+        }
+      },
+
       openShop: (v) => set({ shopOpen: v }),
       openPanel: (v) => set({ panelOpen: v }),
+      openDaily: (v) => set({ dailyOpen: v }),
       setActivePet: (uid) => {
         const st = get();
         const idx = st.storage.findIndex((p) => p.uid === uid);
@@ -340,8 +476,75 @@ export const useGame = create<GameState>()(
         set({ pet: picked, storage });
         get().showToast(`${picked.name} 成为主战宠物！${old.name} 休息一下，进了仓库。`);
       },
-      openPlaza: (v) => set({ plazaOpen: v }),
+      openPlaza: (v, tab) => set((s) => ({ plazaOpen: v, plazaTab: tab ?? s.plazaTab })),
       setAccount: (a) => set({ account: a }),
+
+      openGm: (v) => set({ gmOpen: v }),
+      gmDo: (what) => {
+        const st = get();
+        switch (what) {
+          case "coins": {
+            set({ coins: st.coins + 5000 });
+            get().trackStat("coinsEarned", 5000);
+            get().showToast("🔧 +5000 金币到账！");
+            break;
+          }
+          case "items": {
+            const items = { ...st.items };
+            for (const it of SHOP_ITEMS) items[it.id] = 9;
+            set({ items });
+            get().showToast("🔧 全道具已补满 ×9！");
+            break;
+          }
+          case "outfits": {
+            set({ ownedOutfits: OUTFITS.map((o) => o.id) });
+            get().trackStat("outfitsOwned", 0);
+            get().showToast("🔧 全部衣服已解锁！");
+            break;
+          }
+          case "maxLevel": {
+            if (!st.pet) return;
+            const pet = { ...st.pet, level: MAX_LEVEL, exp: 0, hp: maxHpOf(st.pet) };
+            set({ pet });
+            get().trackStat("levelUps", 0);
+            get().showToast(`🔧 ${pet.name} 已升到 Lv.${MAX_LEVEL}！`);
+            break;
+          }
+          case "heal": {
+            if (!st.pet) return;
+            const pet = { ...st.pet, hp: maxHpOf(st.pet) };
+            set({ pet });
+            get().showToast(`🔧 ${pet.name} 体力已回满！`);
+            break;
+          }
+          case "ch1done": {
+            set({
+              flags: { ...st.flags, intro: true, guardBeaten: true, meadowEvent: true, bossDone: true, elderFinal: true },
+              chapterDone: true,
+            });
+            get().trackStat("bossDone", 0);
+            get().showToast("🔧 第一章已标记完成！森林东边通往星光湖畔。");
+            break;
+          }
+          case "ch2entry": {
+            set({
+              flags: { ...st.flags, ch2Start: true, keeperTalked: true },
+              items: { ...st.items, "potion-l": Math.max(st.items["potion-l"] ?? 0, 2) },
+            });
+            get().showToast("🔧 第二章入口已解锁！洞窟之门开了。");
+            break;
+          }
+          case "ch2done": {
+            set({
+              flags: { ...st.flags, boss2Done: true },
+              chapter2Done: true,
+            });
+            get().trackStat("boss2Done", 0);
+            get().showToast("🔧 第二章已标记完成！星光重新亮起啦。");
+            break;
+          }
+        }
+      },
 
       startPvp: (opponent) => {
         const st = get();
@@ -399,6 +602,7 @@ export const useGame = create<GameState>()(
           return;
         }
         set({ coins: st.coins - price, ownedOutfits: [...st.ownedOutfits, id], outfitId: id });
+        get().trackStat("outfitsOwned");
         get().showToast("新衣服到手，已经穿上啦！");
       },
       equipOutfit: (id) => set({ outfitId: id }),
@@ -412,6 +616,7 @@ export const useGame = create<GameState>()(
         }
         const pet = { ...st.pet, train: { ...st.pet.train, [stat]: st.pet.train[stat] + 1 } };
         set({ coins: st.coins - cost, pet });
+        get().trackStat("dailyTrain");
         get().showToast("训练成功！感觉更有力量了！");
       },
       usePotion: (id, heal) => {
@@ -424,6 +629,7 @@ export const useGame = create<GameState>()(
         const max = maxHpOf(st.pet);
         const pet = { ...st.pet, hp: Math.min(max, (st.pet.hp ?? max) + heal) };
         set({ items: { ...st.items, [id]: st.items[id] - 1 }, pet });
+        get().trackStat("itemsUsed");
         get().showToast(`${pet.name} 恢复了体力！`);
       },
       revive: (id) => {
@@ -436,13 +642,137 @@ export const useGame = create<GameState>()(
         }
         const pet = { ...st.pet, hp: Math.ceil(max / 2) };
         set({ items: { ...st.items, [id]: st.items[id] - 1 }, pet });
+        get().trackStat("itemsUsed");
         get().showToast(`${pet.name} 弹起来啦！`);
+      },
+      useCandy: (id) => {
+        const st = get();
+        if (!st.pet || (st.items[id] ?? 0) <= 0) return;
+        if (st.pet.level >= MAX_LEVEL) {
+          get().showToast(`${st.pet.name} 已经满级啦，糖果留着给别人吃～`);
+          return;
+        }
+        const pet = { ...st.pet };
+        const { levels } = addExp(pet, 100);
+        set({ items: { ...st.items, [id]: st.items[id] - 1 }, pet });
+        get().trackStat("itemsUsed");
+        if (levels > 0) get().trackStat("levelUps", levels);
+        get().showToast(levels > 0 ? `${pet.name} 吃下糖果，升到了 Lv.${pet.level}！` : `${pet.name} 获得了 100 点经验！`);
       },
       showToast: (t) => {
         set({ toast: t });
         setTimeout(() => {
           if (get().toast === t) set({ toast: null });
         }, 2200);
+      },
+
+      trackStat: (key, delta = 1) => {
+        const st = get();
+        // 日常进度：跨天自动重置
+        const today = todayKey();
+        const isDaily = key.startsWith("daily");
+        let dailyProgress = st.dailyProgress;
+        let dailyDate = st.dailyDate;
+        if (isDaily && st.dailyDate !== today) {
+          dailyDate = today;
+          dailyProgress = {};
+        }
+        const nextProgress = isDaily
+          ? { ...dailyProgress, [key]: (dailyProgress[key] ?? 0) + delta }
+          : dailyProgress;
+        const nextStats = { ...st.stats, [key]: (st.stats[key] ?? 0) + delta };
+
+        // 主战宠物等级单独追踪
+        if (st.pet) {
+          nextStats.maxLevel = Math.max(nextStats.maxLevel ?? 0, st.pet.level);
+        }
+
+        set({ stats: nextStats, dailyDate, dailyProgress: nextProgress });
+
+        // 检查新达成的成就（未领取的）
+        const newly = checkAchievements(nextStats, st.achievementsClaimed);
+        if (newly.length > 0 && !st.pendingAchievement) {
+          set({ pendingAchievement: newly[0].id });
+        }
+      },
+
+      claimAchievement: (id) => {
+        const st = get();
+        if (st.achievementsClaimed[id]) return;
+        const def = ACHIEVEMENTS.find((a) => a.id === id);
+        if (!def) return;
+        if ((st.stats[def.stat] ?? 0) < def.target) return;
+        set({
+          achievementsClaimed: { ...st.achievementsClaimed, [id]: true },
+          coins: st.coins + def.reward,
+          pendingAchievement: st.pendingAchievement === id ? null : st.pendingAchievement,
+        });
+        get().showToast(`🏆 成就达成「${def.name}」+${def.reward} 金币！`);
+      },
+
+      claimDaily: (id) => {
+        const st = get();
+        const today = todayKey();
+        if (st.dailyDate !== today) return;
+        if (st.dailyClaimed[id]) return;
+        const def = dailyTasksFor(today).find((d) => d.id === id);
+        if (!def) return;
+        if ((st.dailyProgress[def.stat] ?? 0) < def.target) return;
+        set({
+          dailyClaimed: { ...st.dailyClaimed, [id]: true },
+          coins: st.coins + def.reward,
+        });
+        get().showToast(`📋 日常完成「${def.name}」+${def.reward} 金币！`);
+      },
+
+      doSignin: () => {
+        const st = get();
+        const today = todayKey();
+        if (st.signin.lastDate === today) return;
+        const streak = nextStreak(st.signin, today);
+        const reward = signinReward(streak);
+        set({
+          signin: { lastDate: today, streak, totalDays: st.signin.totalDays + 1 },
+          coins: st.coins + reward.coins,
+          items: reward.ball
+            ? { ...st.items, "ball-basic": (st.items["ball-basic"] ?? 0) + reward.ball }
+            : st.items,
+        });
+        get().showToast(
+          `📅 签到成功（连续 ${streak} 天）！+${reward.coins} 金币${reward.ball ? ` +精灵球×${reward.ball}` : ""}`
+        );
+      },
+
+      dismissAchievement: () => set({ pendingAchievement: null }),
+      setSoundOn: (v) => set({ soundOn: v }),
+
+      claimAllReady: () => {
+        const st = get();
+        // 一键领取所有已达成未领取的成就 + 已完成未领取的日常
+        let total = 0;
+        const claimable = checkAchievements(st.stats, st.achievementsClaimed);
+        const achievementsClaimed = { ...st.achievementsClaimed };
+        for (const a of claimable) {
+          achievementsClaimed[a.id] = true;
+          total += a.reward;
+        }
+        const today = todayKey();
+        let dailyClaimed = st.dailyClaimed;
+        if (st.dailyDate === today) {
+          dailyClaimed = { ...st.dailyClaimed };
+          for (const d of dailyTasksFor(today)) {
+            if (!dailyClaimed[d.id] && (st.dailyProgress[d.stat] ?? 0) >= d.target) {
+              dailyClaimed[d.id] = true;
+              total += d.reward;
+            }
+          }
+        }
+        if (total > 0) {
+          set({ achievementsClaimed, dailyClaimed, coins: st.coins + total, pendingAchievement: null });
+          get().showToast(`🎉 一键领取 +${total} 金币！`);
+        } else {
+          get().showToast("还没有可领取的奖励哦");
+        }
       },
       resetSave: () => {
         set({
@@ -451,7 +781,7 @@ export const useGame = create<GameState>()(
           storage: [],
           items: { "potion-s": 2, "potion-l": 0, revive: 0 },
           flags: {}, zone: "village", px: 8, py: 8,
-          battle: null, battleMeta: null, dialog: null, shopOpen: false, panelOpen: false, chapterDone: false,
+          battle: null, battleMeta: null, dialog: null, shopOpen: false, panelOpen: false, chapterDone: false, chapter2Done: false,
         });
       },
     }),
@@ -466,8 +796,12 @@ export const useGame = create<GameState>()(
       partialize: (s) => ({
         phase: s.phase, affinity: s.affinity, playerName: s.playerName, look: s.look,
         outfitId: s.outfitId, ownedOutfits: s.ownedOutfits, coins: s.coins, pet: s.pet,
-        storage: s.storage, items: s.items, flags: s.flags, zone: s.zone, px: s.px, py: s.py, chapterDone: s.chapterDone,
+        storage: s.storage, items: s.items, flags: s.flags, zone: s.zone, px: s.px, py: s.py,
+        chapterDone: s.chapterDone, chapter2Done: s.chapter2Done,
         account: s.account,
+        stats: s.stats, achievementsClaimed: s.achievementsClaimed,
+        dailyDate: s.dailyDate, dailyProgress: s.dailyProgress, dailyClaimed: s.dailyClaimed,
+        signin: s.signin, soundOn: s.soundOn,
       }),
     }
   )
@@ -502,6 +836,28 @@ function runAfter(set: (p: Partial<GameState>) => void, get: () => GameState, af
       rewardCoins: 400, rewardExp: 200,
       onWinFlag: "bossDone", afterDialog: "bossWin", loseDialog: "bossLoseHint",
     });
+  } else if (after === "battle:boss2") {
+    get().startBattle({
+      kind: "boss", speciesId: "lan", level: 16,
+      rewardCoins: 600, rewardExp: 320,
+      onWinFlag: "boss2Done", afterDialog: "boss2Win", loseDialog: "boss2LoseHint",
+    });
+  } else if (after.startsWith("battle:hero_")) {
+    const heroId = after.slice("battle:hero_".length);
+    const hero = HERO_NPCS.find((h) => h.id === heroId);
+    if (!hero) return;
+    const level = HERO_LEVELS[hero.zone] ?? 5;
+    get().startBattle({
+      kind: "hero", speciesId: hero.petSpeciesId, level,
+      rewardCoins: level * 22 + 60, rewardExp: level * 14 + 20,
+      onWinFlag: `heroBeat_${hero.id}`, heroId: hero.id, heroPetName: hero.name,
+    });
+  } else if (after === "flag:ch2Start+items2") {
+    set({
+      flags: { ...get().flags, ch2Start: true },
+      items: { ...get().items, "potion-l": (get().items["potion-l"] ?? 0) + 2 },
+    });
+    get().showToast("洞窟入口打开啦！获得 大奶瓶 ×2");
   }
 }
 
@@ -521,6 +877,20 @@ function handleBattleEnd(
     const caught = makePetFromSpecies(speciesById(meta.speciesId), nextUid(), meta.level);
     caught.hp = Math.max(1, st.battle.enemy.hp);
     set({ storage: [caught, ...st.storage] });
+    get().trackStat("catches");
+    get().trackStat("dailyCatches");
+    get().trackStat("petsOwned");
+    // 英雄战里抓到的是"英雄本人"：打上英雄标记并播报
+    if (meta.kind === "hero" && meta.heroId) {
+      set({ flags: { ...st.flags, [`heroCaught_${meta.heroId}`]: true } });
+      const hero = HERO_NPCS.find((h) => h.id === meta.heroId);
+      if (hero) {
+        setTimeout(() => get().say([
+          { speaker: hero.name, text: `……愿赌服输！从今往后，我的剑/扇/拳（和这个人）都归你差遣！` },
+          { speaker: "系统", text: `${hero.name} 加入了宠物仓库！英雄胖胖的专属招式一并用王者技能表。` },
+        ]), 600);
+      }
+    }
     setTimeout(() => {
       get().showToast(`${caught.name}（Lv.${caught.level}）加入了宠物仓库！去冒险手册里看看吧～`);
     }, 500);
@@ -554,14 +924,41 @@ function handleBattleEnd(
     const newFlags = { ...st.flags };
     if (meta.onWinFlag) newFlags[meta.onWinFlag] = true;
     set({ pet, coins: st.coins + meta.rewardCoins, flags: newFlags });
+    // 成就/日常统计（battles 已在 startBattle 计入）
+    get().trackStat("wins");
+    get().trackStat("dailyWins");
+    get().trackStat("coinsEarned", meta.rewardCoins);
+    if (levels > 0) get().trackStat("levelUps", levels);
+    if (meta.kind === "pvp" && meta.pvpOpponentId) get().trackStat("pvpWins");
+    if (meta.onWinFlag === "bossDone") get().trackStat("bossDone");
+    if (meta.onWinFlag === "boss2Done") get().trackStat("boss2Done");
+    // 对手身上还挂着中毒/麻痹状态时获胜，计一次"战术胜利"
+    if (st.battle.enemyStatus.poison > 0 || st.battle.enemyStatus.paralyze > 0) {
+      get().trackStat("statusWins");
+    }
     setTimeout(() => {
       get().showToast(`获得 ${meta.rewardCoins} 金币 和 ${meta.rewardExp} 经验！`);
       if (levels > 0) get().showToast(`${pet.name} 升到了 Lv.${pet.level}！`);
-      if (meta.afterDialog) {
+      if (meta.kind === "hero" && meta.heroId) {
+        // 英雄战获胜：英雄认输 + 引导用精灵球收服（英雄本人 / 英雄胖胖）
+        const hero = HERO_NPCS.find((h) => h.id === meta.heroId);
+        if (hero) {
+          const firstBeat = !st.flags[`heroBeat_${hero.id}`];
+          const lines: DialogLine[] = [{ speaker: hero.name, text: hero.loseLine }];
+          if (firstBeat) {
+            lines.push({ speaker: hero.name, text: `告诉你个秘密：下次来找我，可以试试用精灵球「收服」我本人——输了我就跟你走！` });
+          }
+          if (!st.flags[`heroCaught_${hero.id}`]) {
+            lines.push({ speaker: "系统", text: `提示：找英雄再切磋一场，把 TA 的体力打到很低后投精灵球，就能把英雄本人收进仓库！（英雄胖胖也能抓哦）` });
+          }
+          get().say(lines);
+        }
+      } else if (meta.afterDialog) {
         const lines = DIALOGS[meta.afterDialog];
         if (lines) get().say(lines);
       }
       if (meta.onWinFlag === "bossDone") set({ chapterDone: true });
+      if (meta.onWinFlag === "boss2Done") set({ chapter2Done: true });
     }, 300);
   } else if (result === "lose") {
     pet.hp = Math.ceil(maxHpOf(pet) / 2);
@@ -569,7 +966,10 @@ function handleBattleEnd(
     set({ pet, coins: meta.kind === "pvp" ? st.coins : Math.max(0, st.coins - 20) });
     setTimeout(() => {
       if (meta.kind !== "pvp") get().showToast(`输了也不气馁！掉了 20 金币，回村休整一下。`);
-      if (meta.loseDialog) {
+      if (meta.kind === "hero" && meta.heroId) {
+        const hero = HERO_NPCS.find((h) => h.id === meta.heroId);
+        if (hero) get().say([{ speaker: hero.name, text: hero.winLine }]);
+      } else if (meta.loseDialog) {
         const lines = DIALOGS[meta.loseDialog];
         if (lines) get().say(lines);
       }

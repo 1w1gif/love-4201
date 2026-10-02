@@ -4,9 +4,8 @@ import { speciesById, maxHpOf, atkOf, defOf, spdOf, movesOf } from "@maomao/game
 import type { Pet } from "@maomao/game-core";
 import {
   sparCreate, sparJoin, sparCancel, sparGet, sparMyRoom, sparSaveState,
-  chatPost, chatList, presenceTouch, presenceCount,
-} from "./plaza-live";
-import type { SparRoom, SparSide, SparState } from "./plaza-live";
+  chatPost, chatList, presenceUpdate, presenceCount, worldPlayers,
+} from "./plaza-live";import type { SparRoom, SparSide, SparState } from "./plaza-live";
 import { sparDoAction } from "./spar-engine";
 import { loadFromD1, publicPlayer } from "./plaza-db";
 import type { DB } from "./plaza-db";
@@ -139,14 +138,23 @@ export async function handleLiveAction(
       const text = String(body.text ?? "");
       if (!text.trim()) return { error: "想说点什么呀" };
       const msg = await chatPost(db, me.id, me.name, text);
-      await presenceTouch(db, me.id);
+      await presenceUpdate(db, me.id, me.name, String(body.zone ?? ""), 0, 0, "");
       return { ok: true, msg };
     }
     case "chatList": {
-      if (me) await presenceTouch(db, me.id);
+      if (me) await presenceUpdate(db, me.id, me.name, String(body.zone ?? ""), 0, 0, "");
       const msgs = await chatList(db, Number(body.sinceId ?? 0));
       const online = await presenceCount(db);
       return { ok: true, msgs, online };
+    }
+    case "worldPlayers": {
+      if (!me) return { error: "请先登录" };
+      const zone = String(body.zone ?? "");
+      // 上报自己的位置并拉取同场景玩家（一次请求双向完成）
+      const lookJson = body.look ? JSON.stringify(body.look) : "";
+      await presenceUpdate(db, me.id, me.name, zone, Number(body.px ?? 0), Number(body.py ?? 0), lookJson);
+      const players = await worldPlayers(db, zone, me.id);
+      return { ok: true, players };
     }
     default:
       return null; // 不是 live 模块的 action

@@ -9,8 +9,8 @@ import PlazaLive from "./PlazaLive";
 import { Btn, Sprite } from "./Ui";
 
 export default function Plaza() {
-  const { account, setAccount, openPlaza, showToast, startPvp, pet, look, outfitId, playerName } = useGame();
-  const [tab, setTab] = useState<"players" | "bonds" | "rank" | "live">("players");
+  const { account, setAccount, openPlaza, showToast, startPvp, pet, look, outfitId, playerName, plazaTab } = useGame();
+  const [tab, setTab] = useState<"players" | "bonds" | "rank" | "live">(plazaTab ?? "players");
   const [data, setData] = useState<PlazaData | null>(null);
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState(false);

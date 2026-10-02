@@ -3,13 +3,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useGame } from "@/store";
 import {
-  ZONES, NPCS, characterSVG, petSVG, outfitById,
+  ZONES, NPCS, characterSVG, petSVG, outfitById, HERO_NPCS,
 } from "@maomao/game-core";
 import type { OutfitLook } from "@maomao/art-engine";
 import { Btn, CoinBadge, Sprite } from "./Ui";
 import DialogBox from "./DialogBox";
 import Shop from "./Shop";
 import PetPanel from "./PetPanel";
+import DailyPanel from "./DailyPanel";
+import { sfx, startBgm, stopBgm, resume as resumeAudio } from "@/lib/sfx";
+import { plazaPost } from "@/lib/plaza-client";
 
 const TS = 44; // tile size
 
@@ -19,7 +22,14 @@ const NPC_OUTFITS: Record<string, OutfitLook> = {
   villager: { id: "hoodie", main: "#7a8cd8", sub: "#f5efe0" },
   guard: { id: "sport", main: "#5fae8e", sub: "#f5efe0" },
   mei: { id: "dress", main: "#e07a9b", sub: "#f5efe0" },
+  mystic: { id: "wizard", main: "#6a4a9e", sub: "#f5efe0" },
+  keeper: { id: "mecha", main: "#8a97a8", sub: "#ef6f6f" },
 };
+
+// 王者英雄 NPC：穿各自的英雄配色服装（heroes.ts 定义）
+const HERO_OUTFITS: Record<string, OutfitLook> = Object.fromEntries(
+  HERO_NPCS.map((h) => [h.id, h.outfit])
+);
 
 export default function WorldScreen() {
   const st = useGame();
@@ -30,6 +40,26 @@ export default function WorldScreen() {
 
   // NPC 位置快照（阻挡判定）
   const zoneNpcs = useMemo(() => NPCS.filter((n) => n.zone === st.zone), [st.zone]);
+
+  // 同场景在线玩家：上报自己的位置 + 拉取别人（2.5s 轮询）
+  const [onlinePlayers, setOnlinePlayers] = useState<{ playerId: string; name: string; px: number; py: number; look: Parameters<typeof characterSVG>[0] }[]>([]);
+  useEffect(() => {
+    if (!st.account) { setOnlinePlayers([]); return; }
+    let alive = true;
+    const tick = async () => {
+      const s = useGame.getState();
+      if (!s.account || !s.look) return;
+      try {
+        const r = await plazaPost<{ players?: typeof onlinePlayers; error?: string }>({
+          action: "worldPlayers", token: s.account.token, zone: s.zone, px: s.px, py: s.py, look: s.look,
+        });
+        if (alive && r.players) setOnlinePlayers(r.players);
+      } catch { /* 断网静默 */ }
+    };
+    tick();
+    const t = setInterval(tick, 2500);
+    return () => { alive = false; clearInterval(t); };
+  }, [st.account, st.zone]);
 
   // 视口尺寸
   useEffect(() => {
@@ -139,6 +169,25 @@ export default function WorldScreen() {
   const maxHp = st.pet ? st.pet.base.hp + st.pet.level * 5 : 0;
   const hp = st.pet ? (st.pet.hp ?? maxHp) : 0;
 
+  // BGM：按地图氛围切换；音效开关关掉即停
+  useEffect(() => {
+    if (!st.soundOn) { stopBgm(); return; }
+    resumeAudio();
+    startBgm(zone.ambient === "forest" ? "battle" : "town");
+    return () => stopBgm();
+  }, [st.zone, st.soundOn]);
+
+  // 首次用户交互后解锁 AudioContext
+  useEffect(() => {
+    const unlock = () => { if (st.soundOn) resumeAudio(); };
+    window.addEventListener("pointerdown", unlock, { once: true });
+    window.addEventListener("keydown", unlock, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, [st.soundOn]);
+
   return (
     <div className={`screen screen-world ambient-${zone.ambient}`}>
       {/* HUD */}
@@ -159,8 +208,17 @@ export default function WorldScreen() {
               </div>
             </div>
           )}
+          <Btn tone="sun" className="hall-btn" onClick={() => st.openPlaza(true, "live")}>🔥 大厅</Btn>
+          <Btn tone="cream" onClick={() => st.openDaily(true)}>任务</Btn>
           <Btn tone="cream" onClick={() => st.openPlaza(true)}>广场</Btn>
           <Btn tone="cream" onClick={() => st.openPanel(true)}>宠物·背包</Btn>
+          <button
+            className="sound-btn"
+            title={st.soundOn ? "关闭音效" : "开启音效"}
+            onClick={() => { st.setSoundOn(!st.soundOn); sfx.click(); }}
+          >
+            {st.soundOn ? "🔊" : "🔇"}
+          </button>
         </div>
       </div>
 
@@ -172,14 +230,21 @@ export default function WorldScreen() {
         >
           {zone.rows.map((row, y) =>
             row.split("").map((ch, x) => (
-              <Tile key={`${x}-${y}`} ch={ch} x={x} y={y} bossDone={st.flags.bossDone} />
+              <Tile key={`${x}-${y}`} ch={ch} x={x} y={y} bossDone={zone.boss ? !!st.flags[zone.boss.flag] : false} />
             ))
           )}
           {zoneNpcs.map((n) => (
             <div key={n.id} className="entity npc" style={{ left: n.x * TS, top: n.y * TS - 26 }}>
-              <Sprite svg={characterSVG(n.look, NPC_OUTFITS[n.role] ?? NPC_OUTFITS.elder)} />
-              <div className="npc-name">{n.name}</div>
+              <Sprite svg={characterSVG(n.look, NPC_OUTFITS[n.id] ?? NPC_OUTFITS[n.role] ?? NPC_OUTFITS.elder)} />
+              <div className={`npc-name ${n.role === "hero" ? "hero-name" : ""}`}>{n.name}</div>
               {nearNpc?.id === n.id && <div className="talk-bubble">！</div>}
+            </div>
+          ))}
+          {/* 同场景的其他在线玩家 */}
+          {onlinePlayers.map((p) => (
+            <div key={p.playerId} className="entity online-player" style={{ left: p.px * TS, top: p.py * TS - 24 }}>
+              <Sprite svg={characterSVG(p.look, outfitById("tee"))} />
+              <div className="online-name">{p.name}</div>
             </div>
           ))}
           {/* 跟随的宠物 */}
@@ -210,6 +275,7 @@ export default function WorldScreen() {
       {st.dialog && <DialogBox />}
       {st.shopOpen && <Shop />}
       {st.panelOpen && <PetPanel />}
+      {st.dailyOpen && <DailyPanel />}
       <Toast />
     </div>
   );
