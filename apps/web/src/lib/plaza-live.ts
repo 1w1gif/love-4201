@@ -152,6 +152,12 @@ export async function presenceCount(db: D1Database): Promise<number> {
 }
 
 async function ensurePresence(db: D1Database): Promise<void> {
+  // 旧版 presence 表只有 (player_id, seen_at) 两列，缺少位置字段时重建（临时数据可安全丢弃）
+  const cols = await db.prepare(`PRAGMA table_info(presence)`).all<Record<string, unknown>>();
+  const names = new Set((cols.results ?? []).map((c) => String(c.name)));
+  if (names.size > 0 && !names.has("look_json")) {
+    await db.prepare(`DROP TABLE presence`).run();
+  }
   await db.prepare(`CREATE TABLE IF NOT EXISTS presence (
     player_id TEXT PRIMARY KEY,
     seen_at INTEGER NOT NULL,
